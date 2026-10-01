@@ -169,6 +169,35 @@
         return Math.max(0, Math.min(total > 0 ? total - 1 : 0, s));
     }
 
+    /**
+     * In Repeat One, jellyfin-web's Next replays the current track (the queue's "next item" is the current one).
+     * Wraps playbackManager.nextTrack so a user-initiated Next moves on (wrapping at the end of the queue, like
+     * Repeat All) while Repeat One stays selected. Automatic advances after a track ends (isAutoAdvance() true)
+     * keep the stock behaviour, so a non-loop track still repeats. Returns false if already installed.
+     */
+    function installNextTrackOverride(playbackManager, isOurPlayer, isAutoAdvance) {
+        if (!playbackManager || typeof playbackManager.nextTrack !== 'function' || playbackManager.__vgmLoopNextTrack) return false;
+        const original = playbackManager.nextTrack;
+        playbackManager.nextTrack = function (player) {
+            const target = player || playbackManager._currentPlayer;
+            const queue = playbackManager._playQueueManager;
+            if (target && isOurPlayer(target) && !isAutoAdvance() && queue && typeof queue.getRepeatMode === 'function'
+                && queue.getRepeatMode() === 'RepeatOne') {
+                const ownRepeatMode = Object.prototype.hasOwnProperty.call(queue, 'getRepeatMode') ? queue.getRepeatMode : null;
+                queue.getRepeatMode = () => 'RepeatAll'; // only for the synchronous next-item lookup
+                try {
+                    return original.apply(this, arguments);
+                } finally {
+                    if (ownRepeatMode) queue.getRepeatMode = ownRepeatMode;
+                    else delete queue.getRepeatMode;
+                }
+            }
+            return original.apply(this, arguments);
+        };
+        playbackManager.__vgmLoopNextTrack = true;
+        return true;
+    }
+
     const core = {
         adaptDeviceProfile,
         normalizationGainDb,
@@ -184,7 +213,8 @@
         repeatTransition,
         stopReportPosition,
         msToSamples,
-        loopEndSeconds
+        loopEndSeconds,
+        installNextTrackOverride
     };
 
     if (typeof module === 'object' && module.exports) {
@@ -260,6 +290,7 @@
                     }
                 },
                 ended() {
+                    self.player._markAutoAdvance();
                     self._endedInternal();
                 },
                 volumechange() {
@@ -845,7 +876,9 @@
             src.loop = looping;
             src.connect(this.gain);
             src.onended = () => {
-                if (src === this.source) this._finish(this._total);
+                if (src !== this.source) return;
+                this.player._markAutoAdvance();
+                this._finish(this._total);
             };
             src.start(0, pos / info.sampleRate);
             this.source = src;
@@ -1042,6 +1075,8 @@
             this._plain = new PlainEngine(this);
             this._loop = new LoopEngine(this);
             this._engine = this._plain;
+            this._autoAdvanceAt = 0;
+            installNextTrackOverride(deps.playbackManager, (p) => p === this, () => this._isAutoAdvance());
             deps.events.on(this, 'repeatmodechange', () => {
                 if (this._engine === this._loop) this._loop.onRepeatModeChange();
             });
@@ -1051,6 +1086,15 @@
                 pendingNotice = null;
                 setTimeout(() => deps.toast(msg), 1500); // after the app shell has rendered
             }
+        }
+
+        /** A track just ended by itself; the next nextTrack() call is playbackManager's auto-advance. */
+        _markAutoAdvance() {
+            this._autoAdvanceAt = Date.now();
+        }
+
+        _isAutoAdvance() {
+            return Date.now() - this._autoAdvanceAt < 5000;
         }
 
         _savedVolume() {
@@ -1091,6 +1135,7 @@
 
         async play(options) {
             const gen = ++this._playGen;
+            this._autoAdvanceAt = 0;
             let info = null;
             if (AudioContextClass && options.item && options.item.Id && options.mediaSource) {
                 try {
@@ -1125,6 +1170,7 @@
 
         destroy() {
             this._playGen++;
+            this._autoAdvanceAt = 0;
             this._plain.destroy();
             this._loop.destroy();
         }

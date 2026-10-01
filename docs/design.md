@@ -53,6 +53,10 @@ every music track (`item.Type === 'Audio'`) so the player never changes mid-queu
 **Repeat integration.** Looping follows jellyfin-web's repeat button: Repeat One loops forever; Repeat off / all plays
 the file once. Changing the mode mid-track re-anchors the position model without restarting (leaving Repeat One lets
 the track play out; entering it starts looping unless the playhead is already past the loop end).
+In Repeat One, jellyfin-web's Next would replay the current track; `installNextTrackOverride()` wraps
+`playbackManager.nextTrack` so a user-initiated Next moves to the next queue item (wrapping like Repeat All) while
+Repeat One stays selected. A natural end marks the following `nextTrack()` as an automatic advance, which keeps the
+stock behaviour.
 
 **Position model.** An anchor `{ ctxTime0, pos0, looping }` is set on every start, seek and loop toggle. The file
 position is `pos0 + (ctx.currentTime − ctxTime0) × rate`, wrapped into `[loopStart, loopEnd)` while looping, so the

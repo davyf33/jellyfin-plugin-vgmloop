@@ -11,6 +11,8 @@ Requires Jellyfin **12.1**. Works in the web client and in apps that embed it (e
 - Turn on **Repeat One** (the repeat button: off → all → one). A track with loop tags then plays its intro once and
   loops `LOOPSTART` → `LOOPEND` forever, with no gap. The seek bar wraps back to the loop start.
 - Repeat off / Repeat all: the track plays once, start to finish, and the queue moves on.
+- **Next** always skips to the next track, even in Repeat One (which stays on, so the next track loops too). At the end
+  of the queue it wraps to the first track. When a track ends by itself in Repeat One it repeats, as before.
 - Switching repeat mid-track takes effect immediately. Leaving Repeat One lets the current pass finish and the track
   play out; switching to Repeat One starts looping unless the loop is already behind you (an outro).
 - Tracks without loop tags, and MP3/AAC files, play exactly as with the stock player.
