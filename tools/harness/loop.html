@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>VGM Loop harness: loop engine</title>
+<script src="player.js"></script>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 14px/1.4 ui-monospace, monospace; margin: 16px; background: Canvas; color: CanvasText; }
+  pre { white-space: pre-wrap; }
+  .fail { color: #c00; } .pass { color: #080; }
+</style>
+</head>
+<body>
+<button id="run">Run loop-engine checks</button>
+<pre id="log"></pre>
+<script>
+const listeners = new Map();
+const Events = {
+  on(obj, name, fn) { if (!listeners.has(obj)) listeners.set(obj, []); listeners.get(obj).push({ name, fn }); },
+  off(obj, name, fn) { listeners.set(obj, (listeners.get(obj) || []).filter((x) => !(x.name === name && x.fn === fn))); },
+  trigger(obj, name, args) { for (const x of (listeners.get(obj) || []).slice()) if (x.name === name) x.fn({ type: name }, ...(args || [])); }
+};
+const store = new Map();
+const appSettings = { get: (k, u) => store.get((u ? u + '-' : '') + k) ?? null, set: (k, v, u) => store.set((u ? u + '-' : '') + k, v) };
+let repeatMode = 'RepeatOne';
+const files = { flac: 'wii_menu_id3_prefix.flac', vorbis: 'wii_menu_vorbis.ogg', opus: 'wii_menu_opus.opus', bad: 'wii_menu_vorbis.ogg', tone: 'tone.flac', missing: 'nope.flac' };
+const apiClient = {
+  accessToken: () => 'tok',
+  getUrl(path, params) {
+    let m = path.match(/^Audio\/(\w+)\/stream$/);
+    if (m) return files[m[1]] + '?static=' + params.static + '&ApiKey=' + params.ApiKey;
+    m = path.match(/^VgmLoop\/Items\/(\w+)\/LoopInfo$/);
+    if (m) return 'li_' + m[1] + '.json';
+    throw new Error('unexpected url ' + path);
+  },
+  getJSON: (url) => fetch(url).then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+};
+let loadingShown = 0;
+const deps = {
+  events: Events, appSettings,
+  appHost: { supports: () => false, getDeviceProfile: () => Promise.resolve({}) },
+  ServerConnections: { currentApiClient: () => ({ getCurrentUserId: () => 'u1' }), getApiClient: () => apiClient },
+  playbackManager: { getRepeatMode: () => repeatMode },
+  loading: { show() { loadingShown++; }, hide() {} }
+};
+const opts = (id, extra) => Object.assign({ url: files[id] + '?pm', item: { Id: id, ServerId: 's', Type: 'Audio', NormalizationGain: -6 }, mediaSource: { Id: 'ms-' + id } }, extra || {});
+
+const logEl = document.getElementById('log');
+const results = [];
+function log(s, cls) { const span = document.createElement('span'); if (cls) span.className = cls; span.textContent = s + '\n'; logEl.appendChild(span); }
+function check(name, cond, extra) { results.push({ name, ok: !!cond }); log((cond ? 'PASS ' : 'FAIL ') + name + (extra !== undefined ? '  ' + JSON.stringify(extra) : ''), cond ? 'pass' : 'fail'); }
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const near = (a, b, tol) => Math.abs(a - b) <= tol;
+function waitFor(player, name, ms) {
+  return new Promise((resolve) => {
+    const t = setTimeout(() => { Events.off(player, name, fn); resolve(null); }, ms);
+    function fn(e, ...args) { clearTimeout(t); Events.off(player, name, fn); resolve(args); }
+    Events.on(player, name, fn);
+  });
+}
+function setRepeat(p, mode) { repeatMode = mode; Events.trigger(p, 'repeatmodechange'); }
+
+async function seamExact(buffer, ls, le, node) {
+  // Render the looping source offline at the buffer's own rate, starting 1000 samples before the seam.
+  const pre = 1000, n = 4000;
+  const oc = new OfflineAudioContext(buffer.numberOfChannels, n, buffer.sampleRate);
+  const s = oc.createBufferSource();
+  s.buffer = buffer; s.loop = true; s.loopStart = node.loopStart; s.loopEnd = node.loopEnd; // the engine's exact values
+  s.connect(oc.destination); s.start(0, (le - pre) / buffer.sampleRate);
+  const out = await oc.startRendering();
+  let maxErr = 0;
+  for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+    const src = buffer.getChannelData(ch), dst = out.getChannelData(ch);
+    for (let i = 0; i < n; i++) {
+      const expect = i < pre ? src[le - pre + i] : src[ls + (i - pre)];
+      maxErr = Math.max(maxErr, Math.abs(dst[i] - expect));
+    }
+  }
+  return maxErr;
+}
+
+document.getElementById('run').addEventListener('click', async () => {
+  window.__done = false;
+  try {
+    const Cls = await window.VgmLoopPlayer();
+    const p = new Cls(deps);
+    const counts = {};
+    for (const n of ['playing', 'pause', 'unpause', 'timeupdate', 'volumechange', 'stopped', 'error']) { counts[n] = 0; Events.on(p, n, () => counts[n]++); }
+    appSettings.set('volume', 0.5);
+    appSettings.set('selectAudioNormalization', 'TrackGain', 'u1');
+
+    // --- FLAC with ID3 prefix, Repeat One
+    let playing = waitFor(p, 'playing', 8000);
+    await p.play(opts('flac'));
+    check('flac: loop engine chosen', p._engine === p._loop);
+    log('output mode: ' + (localStorage.getItem('vgmloop.output') || 'direct'));
+    check('flac: playing', await playing);
+    const ctx1 = p._loop._ctx;
+    check('flac: AudioContext at 32000', ctx1 && ctx1.sampleRate === 32000 && ctx1.state === 'running', ctx1 && [ctx1.sampleRate, ctx1.state]);
+    if (localStorage.getItem('vgmloop.output') === 'stream') {
+      const se = document.querySelector('audio.vgmLoopStreamAudio');
+      check('stream mode: <audio srcObject> playing', se && se.srcObject && !se.paused, se && [!!se.srcObject, se.paused]);
+    }
+    check('flac: decoded length == totalSamples', p._loop.buffer.length === 2349639, p._loop.buffer.length);
+    check('flac: duration 73426 ms', near(p.duration(), 73426.2, 1), p.duration());
+    check('flac: source loop on, points exact', p._loop.source.loop && p._loop.source.loopStart * 32000 === 197319 && p._loop.source.loopEnd * 32000 <= 2349639 && p._loop.source.loopEnd * 32000 > 2349638.999999);
+    check('flac: gain = vol 0.5 x -6 dB', near(p._loop.gain.gain.value, 0.5 * 0.50119, 1e-3), p._loop.gain.gain.value);
+    check('flac: loading indicator used', loadingShown > 0);
+    check('flac: no PlaybackRate / AirPlay', !p.supports('PlaybackRate') && !p.supports('AirPlay'));
+    const err = await seamExact(p._loop.buffer, 197319, 2349639, p._loop.source);
+    check('flac: Web Audio seam is sample-exact (offline render)', err < 1e-9, err);
+
+    await sleep(600);
+    check('flac: position advancing', p.currentTime() > 300 && p.currentTime() < 1500, p.currentTime());
+
+    // seek to 0.5 s before the seam, wait 1 s -> wrapped to loopStart + 0.5 s
+    p.currentTime(72926);
+    await sleep(1000);
+    const wrapped = p.currentTime();
+    check('flac: wrapped past loopEnd to ~6.67 s', wrapped > 6400 && wrapped < 7300, wrapped);
+    check('flac: seam crossing recorded', p._loop.crossed === true);
+    check('flac: still playing (no stopped)', counts.stopped === 0);
+
+    // pause / resume across time
+    p.pause(); await sleep(150);
+    const tp = p.currentTime(); await sleep(400);
+    if (localStorage.getItem('vgmloop.output') === 'stream') check('stream mode: element paused with the context', document.querySelector('audio.vgmLoopStreamAudio').paused);
+    check('flac: paused freezes position', p.paused() && near(p.currentTime(), tp, 5) && counts.pause === 1, [tp, p.currentTime()]);
+    p.unpause(); await sleep(300);
+    check('flac: unpause', !p.paused() && counts.unpause === 1 && p.currentTime() > tp + 100);
+
+    // volume / mute
+    p.setVolume(100);
+    check('flac: setVolume -> gain & saved', near(p._loop.gain.gain.value, 0.50119, 1e-3) && appSettings.get('volume') === 1 && counts.volumechange >= 1);
+    p.setMute(true);
+    check('flac: mute -> gain 0', p.isMuted() && p._loop.gain.gain.value === 0);
+    p.setMute(false);
+    check('flac: unmute', !p.isMuted() && p._loop.gain.gain.value > 0.4);
+
+    // Repeat One -> None mid-loop: keeps position, stops looping
+    const before = p.currentTime();
+    setRepeat(p, 'RepeatNone');
+    check('toggle One->None: loop off, position continuous', p._loop.source.loop === false && near(p.currentTime(), before, 60), [before, p.currentTime()]);
+    // run into the end of the file -> natural end -> stopped
+    let stopped = waitFor(p, 'stopped', 4000);
+    let posAtStop = null;
+    const onStop = () => { posAtStop = p.currentTime(); }; Events.on(p, 'stopped', onStop);
+    p.currentTime(72900);
+    const s1 = await stopped; Events.off(p, 'stopped', onStop);
+    check('natural end -> stopped with src', s1 && s1[0].src === files.flac + '?pm', s1);
+    check('natural end: currentTime() during stopped = file end', near(posAtStop, 73426, 2), posAtStop);
+    check('after end: buffer released', p._loop.buffer === null && p._loop.source === null);
+
+    // --- Vorbis, None -> One before loopEnd starts looping
+    repeatMode = 'RepeatNone';
+    playing = waitFor(p, 'playing', 8000);
+    await p.play(opts('vorbis', { playerStartPositionTicks: 72000 * 10000 }));
+    check('vorbis: playing from 72 s', (await playing) && p.currentTime() >= 71990 && p.currentTime() < 72600, p.currentTime());
+    check('vorbis: same AudioContext reused (same rate)', p._loop._ctx === ctx1);
+    check('vorbis: not looping in RepeatNone', p._loop.source.loop === false);
+    setRepeat(p, 'RepeatOne');
+    check('toggle None->One before loopEnd: looping', p._loop.source.loop === true);
+    await sleep(1800);
+    check('vorbis: wrapped', p.currentTime() > 6100 && p.currentTime() < 7500, p.currentTime());
+    const vErr = await seamExact(p._loop.buffer, 197319, 2349639, p._loop.source);
+    check('vorbis: seam sample-exact', vErr < 1e-9, vErr);
+
+    // stop(false) after crossing -> report loopEnd
+    let reported = null;
+    const onStop2 = () => { reported = p.currentTime(); }; Events.on(p, 'stopped', onStop2);
+    await p.stop(false);
+    Events.off(p, 'stopped', onStop2);
+    check('stop after seam: reports loopEnd position (73426 ms)', near(reported, 73426, 2), reported);
+
+    // --- Opus: different rate -> new context, old closed
+    repeatMode = 'RepeatOne';
+    playing = waitFor(p, 'playing', 8000);
+    await p.play(opts('opus'));
+    await playing;
+    const ctx2 = p._loop._ctx;
+    check('opus: new AudioContext at 48000, old one closed', ctx2 !== ctx1 && ctx2.sampleRate === 48000 && ctx1.state === 'closed', [ctx2.sampleRate, ctx1.state]);
+    check('opus: decoded length == 3524459 (pre-skip trimmed)', p._loop.buffer.length === 3524459, p._loop.buffer.length);
+    const oErr = await seamExact(p._loop.buffer, 295979, 3524459, p._loop.source);
+    check('opus: seam sample-exact (was 0.085 before loopEndSeconds)', oErr < 1e-9, oErr);
+    p.currentTime(73000); await sleep(800);
+    check('opus: wrapped', p.currentTime() > 6200 && p.currentTime() < 7200, p.currentTime());
+
+    // seek into the loop after toggling off, then back on -> loops again
+    setRepeat(p, 'RepeatAll');
+    p.currentTime(30000);
+    check('seek while RepeatAll: not looping', p._loop.source.loop === false);
+    setRepeat(p, 'RepeatOne');
+    check('back to RepeatOne: looping', p._loop.source.loop === true);
+
+    // stop(true) = teardown with fade, context closed
+    stopped = waitFor(p, 'stopped', 2000);
+    const t0 = performance.now();
+    await p.stop(true);
+    check('stop(true): stopped + fade + context closed', (await stopped) && performance.now() - t0 >= 250 && ctx2.state === 'closed', Math.round(performance.now() - t0));
+
+    // --- Fallbacks
+    repeatMode = 'RepeatOne';
+    playing = waitFor(p, 'playing', 8000);
+    await p.play(opts('bad'));
+    check('bad LoopInfo (loopEnd past buffer) -> plain engine', p._engine === p._plain && (await playing));
+    await p.stop(false);
+
+    playing = waitFor(p, 'playing', 8000);
+    await p.play(opts('tone'));
+    check('hasLoop=false -> plain engine', p._engine === p._plain && (await playing));
+    await p.stop(false);
+
+    playing = waitFor(p, 'playing', 8000);
+    await p.play(Object.assign(opts('tone'), { item: { Id: 'missing', ServerId: 's', Type: 'Audio' }, url: 'tone.flac' }));
+    check('LoopInfo 404 -> plain engine', p._engine === p._plain && (await playing));
+    await p.stop(false);
+
+    // stop() while still fetching/decoding: no playing, no fallback, nothing audible
+    const pc = counts.playing;
+    const pending = p.play(opts('flac'));
+    await sleep(5);
+    await p.stop(false);
+    await pending; await sleep(1500);
+    check('stop during load: aborted cleanly', counts.playing === pc && !p._loop.source && p._engine.currentSrc() == null, { playing: counts.playing - pc });
+
+    check('no error events', counts.error === 0, counts);
+    check('audio elements: plain + (stream mode only) stream', document.querySelectorAll('audio.vgmLoopAudio').length === 1 && document.querySelectorAll('audio').length === (localStorage.getItem('vgmloop.output') === 'stream' ? 2 : 1), document.querySelectorAll('audio').length);
+    p.destroy();
+  } catch (e) {
+    check('exception: ' + (e && e.stack || e), false);
+  }
+  const failed = results.filter((r) => !r.ok).length;
+  log(`\n${results.length - failed}/${results.length} passed`, failed ? 'fail' : 'pass');
+  window.__results = results; window.__done = true;
+});
+</script>
+</body>
+</html>

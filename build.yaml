@@ -1,0 +1,17 @@
+---
+name: "VGM Loop"
+guid: "f19dceed-5dce-4a6e-b77c-1b0ccdf8709a"
+version: "0.4.1.0"
+targetAbi: "12.1.0.0"
+framework: "net10.0"
+owner: "davyf33"
+overview: "Seamless tagged-loop playback for video game music"
+description: >
+  Plays FLAC, Ogg Vorbis and Ogg Opus files carrying LOOPSTART/LOOPLENGTH/LOOPEND tags
+  with sample-accurate, gapless looping in the Jellyfin web client when Repeat One is on.
+  No re-encoding and no changes to files on disk.
+category: "General"
+artifacts:
+  - "Jellyfin.Plugin.VgmLoop.dll"
+changelog: >
+  0.4.1.0: Optional stream output for the loop engine (?vgmloop=stream) for iPhone lock-screen testing; URL switches for phones.

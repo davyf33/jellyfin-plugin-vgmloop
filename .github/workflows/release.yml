@@ -1,0 +1,63 @@
+name: Release
+
+# Push a tag like v0.2.0.0 to publish. The annotated tag message becomes the changelog.
+on:
+  push:
+    tags: ['v*.*.*.*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Test
+        run: |
+          dotnet test -c Release
+          node --test 'tests/js/*.test.mjs'
+
+      - name: Package
+        id: pkg
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          scripts/package.sh "$VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "zip=artifacts/vgm-loop_${VERSION}.zip" >> "$GITHUB_OUTPUT"
+
+      - name: Changelog from tag message
+        run: |
+          git fetch --force origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+          MSG=$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME" | sed '/-----BEGIN PGP/,$d')
+          [ -n "$MSG" ] || MSG="Release ${{ steps.pkg.outputs.version }}"
+          printf '%s\n' "$MSG" > artifacts/changelog.txt
+
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" "${{ steps.pkg.outputs.zip }}" --title "$GITHUB_REF_NAME" --notes-file artifacts/changelog.txt
+
+      - name: Update manifest.json on main
+        run: |
+          git checkout main
+          git pull --ff-only origin main
+          python3 scripts/update_manifest.py \
+            --version "${{ steps.pkg.outputs.version }}" \
+            --zip "${{ steps.pkg.outputs.zip }}" \
+            --url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/vgm-loop_${{ steps.pkg.outputs.version }}.zip" \
+            --changelog-file artifacts/changelog.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add manifest.json
+          git commit -m "manifest: ${{ steps.pkg.outputs.version }}"
+          git push origin main

@@ -1,0 +1,1 @@
+{"itemId":"flac","hasLoop":true,"codec":"flac","container":"flac","sampleRate":32000,"channels":2,"totalSamples":2349639,"audioDataOffset":5822,"loopStart":197319,"loopEnd":2349639,"convention":"LOOPEND exclusive (equals start + length)"}

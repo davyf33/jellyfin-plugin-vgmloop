@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>VGM Loop harness</title>
+<script src="player.js"></script>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 14px/1.4 ui-monospace, monospace; margin: 16px; background: Canvas; color: CanvasText; }
+  pre { white-space: pre-wrap; }
+  .fail { color: #c00; } .pass { color: #080; }
+</style>
+</head>
+<body>
+<button id="run">Run plain-engine checks</button>
+<pre id="log"></pre>
+<script>
+// Minimal stand-ins for the deps jellyfin-web's pluginManager passes to window plugins.
+const listeners = new Map();
+const Events = {
+  on(obj, name, fn) { const k = obj; if (!listeners.has(k)) listeners.set(k, []); listeners.get(k).push({ name, fn }); },
+  off(obj, name, fn) { const l = listeners.get(obj) || []; listeners.set(obj, l.filter((x) => !(x.name === name && x.fn === fn))); },
+  trigger(obj, name, args) { for (const x of (listeners.get(obj) || [])) if (x.name === name) x.fn({ type: name }, ...(args || [])); }
+};
+const store = new Map();
+const appSettings = { get: (k, u) => store.get((u ? u + '-' : '') + k) ?? null, set: (k, v, u) => store.set((u ? u + '-' : '') + k, v) };
+const profile = {
+  DirectPlayProfiles: [{ Container: 'mp4', AudioCodec: 'flac', Type: 'Audio' }, { Container: 'ts', AudioCodec: 'mp3', Type: 'Audio' }],
+  TranscodingProfiles: [{ Type: 'Audio', Protocol: 'hls', Container: 'mp4' }, { Type: 'Audio', Protocol: 'http', Container: 'aac' }]
+};
+const deps = {
+  events: Events, appSettings,
+  appHost: { supports: () => false, getDeviceProfile: () => Promise.resolve(profile) },
+  ServerConnections: { currentApiClient: () => ({ getCurrentUserId: () => 'u1' }) },
+  loading: { show() {}, hide() {} }
+};
+
+const logEl = document.getElementById('log');
+const results = [];
+function log(s, cls) { const span = document.createElement('span'); if (cls) span.className = cls; span.textContent = s + '\n'; logEl.appendChild(span); }
+function check(name, cond, extra) { results.push({ name, ok: !!cond }); log((cond ? 'PASS ' : 'FAIL ') + name + (extra !== undefined ? '  ' + JSON.stringify(extra) : ''), cond ? 'pass' : 'fail'); }
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function waitFor(player, name, ms) {
+  return new Promise((resolve) => {
+    const t = setTimeout(() => { Events.off(player, name, fn); resolve(null); }, ms);
+    function fn(e, ...args) { clearTimeout(t); Events.off(player, name, fn); resolve(args); }
+    Events.on(player, name, fn);
+  });
+}
+
+document.getElementById('run').addEventListener('click', async () => {
+  window.__done = false;
+  try {
+    const Cls = await window.VgmLoopPlayer();
+    const p = new Cls(deps);
+    const counts = {};
+    for (const n of ['playing', 'pause', 'unpause', 'timeupdate', 'volumechange', 'stopped', 'error', 'waiting']) {
+      counts[n] = 0; Events.on(p, n, () => counts[n]++);
+    }
+
+    check('canPlayMediaType Audio', p.canPlayMediaType('Audio') && !p.canPlayMediaType('Video'));
+    check('canPlayItem music only', p.canPlayItem({ Type: 'Audio' }) && !p.canPlayItem({ Type: 'AudioBook' }) && !p.canPlayItem({ Type: 'TvChannel' }));
+    const prof = await p.getDeviceProfile({ Type: 'Audio' });
+    check('profile: no audio HLS', prof.TranscodingProfiles.length === 1 && prof.TranscodingProfiles[0].Protocol === 'http');
+    check('profile: flac remux undone', prof.DirectPlayProfiles.some((x) => x.Container === 'flac'), prof.DirectPlayProfiles);
+
+    appSettings.set('volume', 0.5);
+    appSettings.set('selectAudioNormalization', 'TrackGain', 'u1');
+
+    // 1. play flac with ReplayGain, start at 0.5 s
+    const playing = waitFor(p, 'playing', 4000);
+    await p.play({ url: 'tone.flac', item: { Type: 'Audio', NormalizationGain: -6 }, mediaSource: { Id: 'm' }, playerStartPositionTicks: 5000000 });
+    check('playing event', await playing);
+    check('volume restored from appSettings (0.5 -> ui 79)', p.getVolume() === 79, p.getVolume());
+    check('gain node = -6 dB', p._plain.gainNode && Math.abs(p._plain.gainNode.gain.value - 0.501) < 0.01, p._plain.gainNode && p._plain.gainNode.gain.value);
+    await sleep(700);
+    const t1 = p.currentTime();
+    check('start position honoured (#t=0.5)', t1 >= 650 && t1 < 2500, t1);
+    check('duration ~3000 ms', Math.abs(p.duration() - 3000) < 50, p.duration());
+    check('timeupdate events', counts.timeupdate > 0, counts.timeupdate);
+    check('seekable', p.seekable() === true);
+    check('buffered ranges', p.getBufferedRanges().length > 0, p.getBufferedRanges());
+
+    p.pause(); await sleep(200);
+    check('paused', p.paused() && counts.pause === 1);
+    const t2 = p.currentTime(); await sleep(300);
+    check('position frozen while paused', Math.abs(p.currentTime() - t2) < 30);
+    p.unpause(); await sleep(200);
+    check('unpause', !p.paused() && counts.unpause >= 1);
+
+    p.currentTime(200); await sleep(250);
+    check('seek to 0.2 s', p.currentTime() < 800, p.currentTime());
+
+    p.setVolume(50); await sleep(50);
+    check('setVolume -> volumechange + saved', counts.volumechange >= 1 && Math.abs(appSettings.get('volume') - 0.125) < 1e-9, appSettings.get('volume'));
+    p.setMute(true); check('mute', p.isMuted()); p.setMute(false);
+
+    // 2. stop(false) like playbackManager does between tracks
+    const stopped1 = waitFor(p, 'stopped', 2000);
+    await p.stop(false);
+    const s1 = await stopped1;
+    check('stop(false) -> stopped with src', s1 && s1[0] && s1[0].src && s1[0].src.startsWith('tone.flac'), s1);
+    check('state cleared', p.currentSrc() == null);
+
+    // 3. mp3, normalization off, natural end -> stopped
+    appSettings.set('selectAudioNormalization', 'Off', 'u1');
+    await p.play({ url: 'tone.mp3', item: { Type: 'Audio', NormalizationGain: -12 }, mediaSource: { Id: 'm2' } });
+    check('gain reset to 1 when normalization off', p._plain.gainNode.gain.value === 1, p._plain.gainNode.gain.value);
+    const ended = await waitFor(p, 'stopped', 6000);
+    check('natural end -> stopped', ended && ended[0].src === 'tone.mp3', ended);
+
+    // 4. stop(true) with fade while playing
+    await p.play({ url: 'tone.flac', item: { Type: 'Audio' }, mediaSource: { Id: 'm' } });
+    p.setVolume(100);
+    await sleep(300);
+    const stopped3 = waitFor(p, 'stopped', 3000);
+    const t0 = performance.now();
+    await p.stop(true);
+    check('stop(true) fades then stops', (await stopped3) && performance.now() - t0 > 200, Math.round(performance.now() - t0));
+    check('volume restored after fade', p._plain.elem.volume === 1, p._plain.elem.volume);
+
+    // 5. unsupported source -> error event
+    const err = waitFor(p, 'error', 3000);
+    let rejected = null;
+    await p.play({ url: 'missing.flac', item: { Type: 'Audio' }, mediaSource: { Id: 'x' } }).catch((x) => { rejected = x && x.name; });
+    const e = rejected ? null : await err;
+    check('missing file -> play() rejects or error event (stock behaviour)', rejected || (e && e[0].type), rejected || e);
+
+    check('no unexpected errors during normal playback', counts.error <= 1, counts);
+    check('single audio element', document.querySelectorAll('audio').length === 1);
+  } catch (e) {
+    check('exception: ' + (e && e.stack || e), false);
+  }
+  const failed = results.filter((r) => !r.ok).length;
+  log(`\n${results.length - failed}/${results.length} passed`, failed ? 'fail' : 'pass');
+  window.__results = results; window.__done = true;
+});
+</script>
+</body>
+</html>

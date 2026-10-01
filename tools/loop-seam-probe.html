@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Loop seam probe</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@500;700&family=Red+Hat+Text:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  box-sizing: border-box;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  --paper: #eef1f4; --panel: #ffffff; --ink: #1d2b45; --muted: #5b6780;
+  --line: #cfd6df; --splice: #0f8b8d; --orig: #c8811a; --ok: #2e7d32; --bad: #b3261e; --warn: #9a6400;
+  --focus: #3056d3;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #131a26; --panel: #1b2433; --ink: #e4e9f1; --muted: #9aa6bb;
+    --line: #2d3a50; --splice: #3cc7c9; --orig: #f0a83c; --ok: #6cc070; --bad: #ff7a70; --warn: #e3b341; --focus: #8aa4ff;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #131a26; --panel: #1b2433; --ink: #e4e9f1; --muted: #9aa6bb;
+  --line: #2d3a50; --splice: #3cc7c9; --orig: #f0a83c; --ok: #6cc070; --bad: #ff7a70; --warn: #e3b341; --focus: #8aa4ff;
+}
+*, *::before, *::after { box-sizing: inherit; }
+html { scroll-padding-top: env(safe-area-inset-top, 0px); }
+body {
+  margin: 0; background: var(--paper); color: var(--ink);
+  font: 400 16px/1.55 "Red Hat Text", system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+main { max-width: 860px; margin: 0 auto; padding: 40px 20px 64px; }
+h1, h2, h3 { font-family: "Red Hat Display", "Red Hat Text", system-ui, sans-serif; line-height: 1.2; margin: 0; }
+h1 { font-size: 2.1rem; font-weight: 700; letter-spacing: -0.01em; }
+h2 { font-size: 1.3rem; font-weight: 700; margin: 44px 0 12px; }
+h3 { font-size: 1.1rem; font-weight: 500; overflow-wrap: anywhere; }
+.lede { color: var(--muted); max-width: 62ch; margin: 10px 0 0; }
+section.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; }
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 0.95rem; }
+td, th { text-align: left; padding: 6px 12px 6px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 500; color: var(--muted); white-space: nowrap; width: 38%; }
+tr:last-child td, tr:last-child th { border-bottom: none; }
+.ok { color: var(--ok); } .bad { color: var(--bad); } .warn { color: var(--warn); }
+button, .filebtn {
+  font: 600 0.95rem/1 "Red Hat Text", system-ui, sans-serif; color: var(--paper); background: var(--ink);
+  border: 0; border-radius: 6px; padding: 11px 16px; cursor: pointer; display: inline-block;
+}
+button.secondary { background: transparent; color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--ink); }
+button:disabled { opacity: 0.45; cursor: default; }
+button:focus-visible, .filebtn:focus-within { outline: 3px solid var(--focus); outline-offset: 2px; }
+.filebtn input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 14px; }
+.file { margin-top: 18px; }
+.verdict { margin: 12px 0 4px; font-weight: 600; }
+.seam { margin: 14px 0 0; }
+.seam canvas { width: 100%; height: 180px; display: block; border-radius: 6px; background: var(--paper); }
+.legend { display: flex; flex-wrap: wrap; gap: 18px; font-size: 0.88rem; color: var(--muted); margin-top: 6px; }
+.legend span::before { content: ""; display: inline-block; width: 18px; height: 3px; margin-right: 7px; vertical-align: middle; background: var(--c); }
+.status { font-size: 0.9rem; color: var(--muted); min-height: 1.4em; }
+textarea { width: 100%; min-height: 200px; font: 0.82rem/1.4 ui-monospace, "SF Mono", Menlo, Consolas, monospace; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+.drop { border: 2px dashed var(--line); border-radius: 10px; padding: 22px; text-align: center; color: var(--muted); }
+.drop.over { border-color: var(--splice); color: var(--ink); }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Loop seam probe</h1>
+  <p class="lede">Checks whether this browser can decode tagged loop files at their native sample rate and jump from the loop end back to the loop start without a click. Run it in every browser and app you plan to use, then copy the results back into the chat.</p>
+
+  <h2>This browser</h2>
+  <section class="panel"><div class="tablewrap"><table id="env"><tbody><tr><td>Checking…</td></tr></tbody></table></div></section>
+
+  <h2>Test files</h2>
+  <section class="panel">
+    <div class="drop" id="drop">
+      Drop FLAC, Ogg Vorbis or Opus files here, or
+      <div class="row" style="justify-content:center">
+        <label class="filebtn">Choose audio files<input type="file" id="pick" multiple accept=".flac,.ogg,.oga,.opus,audio/*"></label>
+      </div>
+    </div>
+    <p class="status" id="status"></p>
+    <div id="files"></div>
+  </section>
+
+  <h2>Results to send back</h2>
+  <section class="panel">
+    <textarea id="out" readonly aria-label="Results as JSON"></textarea>
+    <div class="row"><button id="copy">Copy results</button><span class="status" id="copied"></span></div>
+  </section>
+</main>
+
+<script>
+(() => {
+  'use strict';
+  const results = { probeVersion: 1, env: {}, files: [] };
+  const $ = (s) => document.querySelector(s);
+  const AC = window.AudioContext || window.webkitAudioContext;
+  const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  const ctxByRate = new Map();
+  let playing = null;
+
+  function writeOut() { $('#out').value = JSON.stringify(results, null, 2); }
+  function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+  function rowsHtml(rows) { return rows.map(([k, v, cls]) => `<tr><th scope="row">${esc(k)}</th><td class="${cls || ''}">${esc(v)}</td></tr>`).join(''); }
+
+  // ---------- environment ----------
+  async function probeEnv() {
+    const env = results.env;
+    env.userAgent = navigator.userAgent;
+    env.platform = navigator.userAgentData ? navigator.userAgentData.platform : navigator.platform;
+    env.deviceMemoryGB = navigator.deviceMemory ?? null;
+    env.audioWorklet = !!(AC && 'audioWorklet' in AC.prototype);
+    env.mediaSession = 'mediaSession' in navigator;
+    env.audioSession = 'audioSession' in navigator;
+    env.webCodecsAudioDecoder = 'AudioDecoder' in window;
+    env.contexts = {};
+    if (!AC) { env.webAudio = false; renderEnv(); return; }
+    env.webAudio = true;
+    try {
+      const c = new AC();
+      env.defaultSampleRate = c.sampleRate;
+      env.baseLatency = c.baseLatency ?? null;
+      env.initialState = c.state;
+      await c.close();
+    } catch (e) { env.defaultContextError = String(e); }
+    for (const r of [22050, 32000, 44100, 48000]) {
+      try { const c = new AC({ sampleRate: r }); env.contexts[r] = c.sampleRate === r ? 'honored' : `got ${c.sampleRate}`; await c.close(); }
+      catch (e) { env.contexts[r] = 'error: ' + (e.name || e); }
+    }
+    if (env.webCodecsAudioDecoder) {
+      try { const s = await AudioDecoder.isConfigSupported({ codec: 'opus', sampleRate: 48000, numberOfChannels: 2 }); env.webCodecsOpus = !!s.supported; }
+      catch (e) { env.webCodecsOpus = 'error: ' + e.name; }
+    }
+    renderEnv();
+  }
+  function renderEnv() {
+    const e = results.env, yes = (b) => (b ? 'yes' : 'no');
+    const rows = [
+      ['Browser', e.userAgent],
+      ['Web Audio', yes(e.webAudio), e.webAudio ? 'ok' : 'bad'],
+      ['Default output rate', e.defaultSampleRate ? e.defaultSampleRate + ' Hz' : '—'],
+    ];
+    for (const [r, v] of Object.entries(e.contexts || {})) rows.push([`Context at ${r} Hz`, v, v === 'honored' ? 'ok' : 'bad']);
+    rows.push(['AudioWorklet', yes(e.audioWorklet)], ['WebCodecs AudioDecoder', yes(e.webCodecsAudioDecoder) + (e.webCodecsOpus !== undefined ? ` (Opus: ${e.webCodecsOpus})` : '')],
+      ['Media Session API', yes(e.mediaSession)], ['navigator.audioSession', yes(e.audioSession)], ['Device memory', e.deviceMemoryGB ? e.deviceMemoryGB + ' GB (rounded)' : 'not reported']);
+    $('#env tbody').innerHTML = rowsHtml(rows);
+    writeOut();
+  }
+
+  // ---------- tag + header parsing ----------
+  const td = new TextDecoder();
+  function parseComments(u8, off) {
+    const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+    const tags = {}; let p = off;
+    const vlen = dv.getUint32(p, true); p += 4 + vlen;
+    const n = dv.getUint32(p, true); p += 4;
+    for (let i = 0; i < n && p + 4 <= u8.length; i++) {
+      const len = dv.getUint32(p, true); p += 4;
+      const s = td.decode(u8.subarray(p, p + len)); p += len;
+      const eq = s.indexOf('=');
+      if (eq > 0) { const k = s.slice(0, eq).toUpperCase(); if (!(k in tags)) tags[k] = s.slice(eq + 1); }
+    }
+    return tags;
+  }
+  function parseHeader(buf) {
+    const u8 = new Uint8Array(buf), dv = new DataView(buf);
+    let p = 0;
+    if (u8[0] === 0x49 && u8[1] === 0x44 && u8[2] === 0x33) {
+      p = 10 + ((u8[6] << 21) | (u8[7] << 14) | (u8[8] << 7) | u8[9]) + ((u8[5] & 0x10) ? 10 : 0);
+    }
+    const magic = td.decode(u8.subarray(p, p + 4));
+    if (magic === 'fLaC') {
+      const info = { container: 'flac', codec: 'flac', tags: {} };
+      let q = p + 4;
+      for (let guard = 0; guard < 128 && q + 4 <= u8.length; guard++) {
+        const hdr = u8[q], type = hdr & 0x7f, len = (u8[q + 1] << 16) | (u8[q + 2] << 8) | u8[q + 3], b = q + 4;
+        if (type === 0) {
+          info.sampleRate = (u8[b + 10] << 12) | (u8[b + 11] << 4) | (u8[b + 12] >> 4);
+          info.channels = ((u8[b + 12] >> 1) & 7) + 1;
+          info.bitsPerSample = (((u8[b + 12] & 1) << 4) | (u8[b + 13] >> 4)) + 1;
+          info.totalSamples = (u8[b + 13] & 0x0f) * 2 ** 32 + dv.getUint32(b + 14, false);
+          info.flacDescription = u8.slice(p, b + 34);
+        } else if (type === 4) info.tags = parseComments(u8.subarray(b, b + len), 0);
+        if (hdr & 0x80) break;
+        q = b + len;
+      }
+      return info;
+    }
+    if (magic === 'OggS') return parseOgg(u8, dv, p);
+    return { container: 'unknown', tags: {} };
+  }
+  function parseOgg(u8, dv, start) {
+    const packets = []; let cur = []; let serial = null; let p = start;
+    for (let pages = 0; pages < 4000 && packets.length < 2 && p + 27 <= u8.length; pages++) {
+      if (dv.getUint32(p, false) !== 0x4f676753) break;
+      const ser = dv.getUint32(p + 14, true), nseg = u8[p + 26];
+      let body = p + 27 + nseg;
+      if (serial === null) serial = ser;
+      for (let i = 0; i < nseg; i++) {
+        const lace = u8[p + 27 + i];
+        if (ser === serial) {
+          cur.push(u8.subarray(body, body + lace));
+          if (lace < 255) {
+            const total = cur.reduce((a, c) => a + c.length, 0), pk = new Uint8Array(total); let o = 0;
+            for (const c of cur) { pk.set(c, o); o += c.length; }
+            packets.push(pk); cur = [];
+          }
+        }
+        body += lace;
+      }
+      p = body;
+    }
+    const info = { container: 'ogg', tags: {} };
+    const head = packets[0] || new Uint8Array(0), hdv = new DataView(head.buffer, head.byteOffset, head.byteLength);
+    const h8 = td.decode(head.subarray(0, 8));
+    if (h8 === 'OpusHead') {
+      info.codec = 'opus'; info.channels = head[9]; info.preSkip = hdv.getUint16(10, true);
+      info.inputSampleRate = hdv.getUint32(12, true); info.sampleRate = 48000;
+      if (packets[1] && td.decode(packets[1].subarray(0, 8)) === 'OpusTags') info.tags = parseComments(packets[1], 8);
+    } else if (head[0] === 1 && td.decode(head.subarray(1, 7)) === 'vorbis') {
+      info.codec = 'vorbis'; info.channels = head[11]; info.sampleRate = hdv.getUint32(12, true);
+      if (packets[1] && packets[1][0] === 3) info.tags = parseComments(packets[1], 7);
+    } else info.codec = 'unknown';
+    // last page granule for this stream
+    for (let i = u8.length - 27; i >= Math.max(0, u8.length - 262144); i--) {
+      if (u8[i] === 0x4f && u8[i + 1] === 0x67 && u8[i + 2] === 0x67 && u8[i + 3] === 0x53 && u8[i + 4] === 0 && dv.getUint32(i + 14, true) === serial) {
+        const g = dv.getBigInt64(i + 6, true);
+        if (g >= 0n) { info.lastGranule = Number(g); break; }
+      }
+    }
+    if (info.lastGranule != null) info.totalSamples = info.codec === 'opus' ? info.lastGranule - (info.preSkip || 0) : info.lastGranule;
+    return info;
+  }
+
+  // ---------- loop tag resolution ----------
+  function parseLoopVal(v, rate) {
+    if (v == null) return null;
+    const s = String(v).trim(); let m;
+    if (/^\d+$/.test(s)) return { samples: parseInt(s, 10), unit: 'samples' };
+    if (/^\d*\.\d+$/.test(s)) return { samples: Math.round(parseFloat(s) * rate), unit: 'seconds' };
+    if ((m = s.match(/^(\d+):(\d+(?:\.\d+)?)$/))) return { samples: Math.round((+m[1] * 60 + +m[2]) * rate), unit: 'mm:ss' };
+    if ((m = s.match(/^(\d+):(\d+):(\d+(?:\.\d+)?)$/))) return { samples: Math.round((+m[1] * 3600 + +m[2] * 60 + +m[3]) * rate), unit: 'hh:mm:ss' };
+    return { samples: null, unit: 'unparsed' };
+  }
+  function resolveLoop(tags, rate, total) {
+    const pick = (...ks) => { for (const k of ks) if (k in tags) return { key: k, raw: tags[k] }; return null; };
+    const st = pick('LOOPSTART', 'LOOP_START'), ln = pick('LOOPLENGTH', 'LOOP_LENGTH'), en = pick('LOOPEND', 'LOOP_END');
+    const found = [st, ln, en].filter(Boolean).map((t) => `${t.key}=${t.raw}`);
+    if (!st) return { found, loop: null, note: 'No loop start tag.' };
+    const s = parseLoopVal(st.raw, rate), l = ln && parseLoopVal(ln.raw, rate), e = en && parseLoopVal(en.raw, rate);
+    if (s.samples == null) return { found, loop: null, note: 'Loop start value could not be parsed.' };
+    let endEx, note;
+    if (l && l.samples != null) {
+      endEx = s.samples + l.samples;
+      if (e && e.samples != null) note = e.samples === endEx ? 'LOOPEND is exclusive (equals start + length).' : e.samples === endEx - 1 ? 'LOOPEND is inclusive (start + length − 1).' : 'LOOPEND disagrees with start + length; using start + length.';
+      else note = 'End taken from start + length.';
+    } else if (e && e.samples != null) {
+      endEx = e.samples;
+      note = total && e.samples === total - 1 ? 'Only LOOPEND, equal to the last sample index: probably inclusive. Using it as exclusive; check the seam result.' : 'Only LOOPEND: treated as exclusive.';
+    } else { endEx = total; note = 'No end tag: loops at the end of the track.'; }
+    return { found, units: [s.unit, l && l.unit, e && e.unit].filter(Boolean), loop: { start: s.samples, endExclusive: endEx }, note };
+  }
+
+  // ---------- analysis ----------
+  function mono(buffer) {
+    const n = buffer.length, out = new Float32Array(n), ch = buffer.numberOfChannels;
+    for (let c = 0; c < ch; c++) { const d = buffer.getChannelData(c); for (let i = 0; i < n; i++) out[i] += d[i] / ch; }
+    return out;
+  }
+  function seamAnalysis(x, S, E) {
+    if (S == null || E == null || E > x.length || S < 64 || E <= S) return null;
+    const W = Math.min(4096, S), err = (d) => {
+      let num = 0, den = 0;
+      for (let i = 0; i < W; i++) { const a = x[E + d - W + i], b = x[S - W + i]; if (a === undefined) return Infinity; num += (a - b) ** 2; den += b * b; }
+      return den > 0 ? Math.sqrt(num / den) : Infinity;
+    };
+    let best = 0, bestErr = Infinity;
+    for (let d = -64; d <= 64; d++) { const v = err(d); if (v < bestErr) { bestErr = v; best = d; } }
+    let identical = 0;
+    while (identical < S && x[E - 1 - identical] === x[S - 1 - identical]) identical++;
+    const fmt = (v) => (Number.isFinite(v) ? +v.toPrecision(4) : null);
+    return { window: W, errorAtTags: fmt(err(0)), bestOffset: best, errorAtBest: fmt(bestErr), errorIfEndInclusive: fmt(err(1)), identicalSamplesBeforeSeam: identical };
+  }
+  function drawSeam(canvas, x, S, E) {
+    const dpr = window.devicePixelRatio || 1, w = canvas.clientWidth, h = canvas.clientHeight;
+    canvas.width = w * dpr; canvas.height = h * dpr;
+    const g = canvas.getContext('2d'); g.scale(dpr, dpr);
+    const cs = getComputedStyle(document.documentElement), N = 120;
+    const spliced = [], orig = [];
+    for (let i = -N; i < N; i++) { spliced.push(i < 0 ? x[E + i] : x[S + i]); orig.push(x[S + i]); }
+    const peak = Math.max(1e-6, ...spliced.map(Math.abs), ...orig.map(Math.abs));
+    const px = (i) => (i / (2 * N - 1)) * (w - 8) + 4, py = (v) => h / 2 - (v / peak) * (h / 2 - 10);
+    g.strokeStyle = cs.getPropertyValue('--line'); g.lineWidth = 1;
+    g.beginPath(); g.moveTo(0, h / 2); g.lineTo(w, h / 2); g.stroke();
+    g.setLineDash([4, 4]); g.beginPath(); g.moveTo(px(N - 0.5), 0); g.lineTo(px(N - 0.5), h); g.stroke(); g.setLineDash([]);
+    const line = (arr, color, width, dash) => { g.strokeStyle = color; g.lineWidth = width; g.setLineDash(dash); g.beginPath(); arr.forEach((v, i) => (i ? g.lineTo(px(i), py(v)) : g.moveTo(px(i), py(v)))); g.stroke(); };
+    line(orig, cs.getPropertyValue('--orig'), 3, [6, 4]);
+    line(spliced, cs.getPropertyValue('--splice'), 1.8, []);
+    g.setLineDash([]);
+  }
+
+  // ---------- playback ----------
+  function getCtx(rate) {
+    const key = rate || 'default';
+    if (!ctxByRate.has(key)) ctxByRate.set(key, rate ? new AC({ sampleRate: rate }) : new AC());
+    return ctxByRate.get(key);
+  }
+  function stopAll() {
+    if (playing) { try { playing.src.stop(); } catch (_) {} cancelAnimationFrame(playing.raf); playing.statusEl.textContent = 'Stopped.'; playing = null; }
+  }
+  async function playLoop(buffer, rate, S, E, fromSec, statusEl, label) {
+    stopAll();
+    const ctx = getCtx(rate);
+    await ctx.resume();
+    const src = ctx.createBufferSource();
+    src.buffer = buffer; src.loop = true;
+    src.loopStart = S / buffer.sampleRate; src.loopEnd = E / buffer.sampleRate;
+    src.connect(ctx.destination);
+    const t0 = ctx.currentTime + 0.05; src.start(t0, fromSec);
+    const loopLen = (E - S) / buffer.sampleRate, endSec = E / buffer.sampleRate;
+    const note = ctx.sampleRate !== buffer.sampleRate ? ` (context ${ctx.sampleRate} Hz, buffer ${buffer.sampleRate} Hz: resampled on the fly)` : ` (context and buffer both ${ctx.sampleRate} Hz)`;
+    const tick = () => {
+      const t = fromSec + Math.max(0, ctx.currentTime - t0);
+      const loops = t >= endSec ? 1 + Math.floor((t - endSec) / loopLen) : 0;
+      const pos = t < endSec ? t : S / buffer.sampleRate + ((t - endSec) % loopLen);
+      statusEl.textContent = `${label}: ${pos.toFixed(2)} s, seams crossed: ${loops}${note}`;
+      if (playing) playing.raf = requestAnimationFrame(tick);
+    };
+    playing = { src, statusEl, raf: requestAnimationFrame(tick) };
+  }
+
+  // ---------- per-file flow ----------
+  async function handleFile(file) {
+    const card = document.createElement('div'); card.className = 'file';
+    card.innerHTML = `<h3>${esc(file.name)}</h3><p class="status">Reading…</p>`;
+    $('#files').appendChild(card);
+    const r = { name: file.name, bytes: file.size };
+    results.files.push(r);
+    const buf = await file.arrayBuffer();
+    const hdr = parseHeader(buf);
+    Object.assign(r, { container: hdr.container, codec: hdr.codec, headerSampleRate: hdr.sampleRate, channels: hdr.channels, preSkip: hdr.preSkip, inputSampleRate: hdr.inputSampleRate, expectedSamples: hdr.totalSamples });
+    const lr = resolveLoop(hdr.tags, hdr.sampleRate || 48000, hdr.totalSamples);
+    r.loopTags = lr.found; r.loopUnits = lr.units; r.loop = lr.loop; r.loopNote = lr.note;
+
+    let native = null, dflt = null;
+    if (OAC && hdr.sampleRate) {
+      try {
+        const oc = new OAC(hdr.channels || 2, 1, hdr.sampleRate), t = performance.now();
+        native = await oc.decodeAudioData(buf.slice(0));
+        r.nativeDecode = { sampleRate: native.sampleRate, length: native.length, ms: Math.round(performance.now() - t), memoryMB: +(native.length * native.numberOfChannels * 4 / 1048576).toFixed(1) };
+        if (hdr.totalSamples != null) r.nativeDecode.lengthMinusExpected = native.length - hdr.totalSamples;
+      } catch (e) { r.nativeDecode = { error: String(e && (e.message || e.name) || e) }; }
+    }
+    try {
+      const dc = getCtx(null), t = performance.now();
+      dflt = await dc.decodeAudioData(buf.slice(0));
+      r.defaultDecode = { sampleRate: dflt.sampleRate, length: dflt.length, ms: Math.round(performance.now() - t) };
+    } catch (e) { r.defaultDecode = { error: String(e && (e.message || e.name) || e) }; }
+    if (window.AudioDecoder && hdr.codec) {
+      const cfg = { codec: hdr.codec, sampleRate: hdr.sampleRate || 48000, numberOfChannels: hdr.channels || 2 };
+      if (hdr.codec === 'flac' && hdr.flacDescription) cfg.description = hdr.flacDescription;
+      try { r.webCodecsSupported = !!(await AudioDecoder.isConfigSupported(cfg)).supported; } catch (e) { r.webCodecsSupported = 'error: ' + e.name; }
+      if (hdr.codec === 'vorbis') r.webCodecsNote = 'Checked without the Vorbis setup headers, so "false" may be a false negative.';
+    }
+    let x = null;
+    if (native && r.loop) { x = mono(native); r.seam = seamAnalysis(x, r.loop.start, r.loop.endExclusive); }
+    renderFile(card, r, native, dflt, x);
+    writeOut();
+  }
+
+  function renderFile(card, r, native, dflt, x) {
+    const cls = (ok) => (ok ? 'ok' : 'bad');
+    const rows = [
+      ['Format', `${r.codec || '?'} in ${r.container}, ${r.channels || '?'} ch, ${r.headerSampleRate || '?'} Hz` + (r.preSkip != null ? `, pre-skip ${r.preSkip}` : '')],
+      ['Samples (from header)', r.expectedSamples ?? 'unknown'],
+      ['Loop tags', r.loopTags.length ? r.loopTags.join(', ') : 'none found'],
+      ['Loop used', r.loop ? `${r.loop.start} → ${r.loop.endExclusive} (end exclusive)` : '—'],
+      ['Tag convention', r.loopNote],
+    ];
+    if (r.nativeDecode) rows.push(r.nativeDecode.error ? ['Decode at native rate', 'failed: ' + r.nativeDecode.error, 'bad']
+      : ['Decode at native rate', `${r.nativeDecode.length} samples at ${r.nativeDecode.sampleRate} Hz` + (r.nativeDecode.lengthMinusExpected != null ? `, ${r.nativeDecode.lengthMinusExpected >= 0 ? '+' : ''}${r.nativeDecode.lengthMinusExpected} vs header` : '') + `, ${r.nativeDecode.ms} ms, ${r.nativeDecode.memoryMB} MB`, cls(r.nativeDecode.lengthMinusExpected === 0)]);
+    if (r.defaultDecode) rows.push(r.defaultDecode.error ? ['Decode at default rate', 'failed: ' + r.defaultDecode.error, 'bad'] : ['Decode at default rate', `${r.defaultDecode.length} samples at ${r.defaultDecode.sampleRate} Hz, ${r.defaultDecode.ms} ms`]);
+    if (r.webCodecsSupported !== undefined) rows.push(['WebCodecs decoder', String(r.webCodecsSupported)]);
+    if (r.seam) rows.push(['Seam match', `error ${r.seam.errorAtTags} at the tags; best ${r.seam.errorAtBest} at offset ${r.seam.bestOffset >= 0 ? '+' : ''}${r.seam.bestOffset}; ${r.seam.errorIfEndInclusive ?? 'n/a (past the end)'} if LOOPEND were inclusive; ${r.seam.identicalSamplesBeforeSeam} bit-identical samples before the seam`, cls(r.seam.bestOffset === 0)]);
+
+    let verdict = '', vcls = 'ok';
+    if (!native) { verdict = 'This browser could not decode the file at its native rate.'; vcls = 'bad'; }
+    else if (!r.loop) { verdict = 'Decoded, but there are no usable loop tags to test.'; vcls = 'warn'; }
+    else if (!r.seam) { verdict = 'Decoded, but the loop end lies past the decoded audio.'; vcls = 'bad'; }
+    else if (r.seam.bestOffset === 0) verdict = r.seam.identicalSamplesBeforeSeam >= 64 ? 'Loop points line up bit-exactly. Listen to confirm there is no click.' : 'Loop points line up (lossy codec, so the two sides differ slightly). Listen to confirm.';
+    else { verdict = `The audio lines up best ${r.seam.bestOffset} samples away from the tagged end. The tags or the decoder are off.`; vcls = 'bad'; }
+
+    card.innerHTML = `<h3>${esc(r.name)}</h3><p class="verdict ${vcls}">${esc(verdict)}</p>
+      <div class="tablewrap"><table><tbody>${rowsHtml(rows)}</tbody></table></div>
+      ${x && r.seam ? `<div class="seam"><canvas role="img" aria-label="Waveform around the loop seam"></canvas>
+        <div class="legend"><span style="--c:var(--splice)">What playback produces: loop end, then loop start</span><span style="--c:var(--orig)">Original audio leading into the loop start</span></div></div>` : ''}
+      <div class="row"></div><p class="status" aria-live="polite"></p>`;
+    if (x && r.seam) requestAnimationFrame(() => drawSeam(card.querySelector('canvas'), x, r.loop.start, r.loop.endExclusive));
+    const row = card.querySelector('.row'), st = card.querySelectorAll('.status'), statusEl = st[st.length - 1];
+    const btn = (text, fn, secondary) => { const b = document.createElement('button'); b.textContent = text; if (secondary) b.className = 'secondary'; b.onclick = fn; row.appendChild(b); return b; };
+    if (native && r.loop && r.seam) {
+      const S = r.loop.start, E = r.loop.endExclusive, sr = native.sampleRate;
+      btn('Play across the seam', () => playLoop(native, sr, S, E, Math.max(0, E / sr - 4), statusEl, 'Native rate'));
+      btn('Play from the start', () => playLoop(native, sr, S, E, 0, statusEl, 'Native rate'), true);
+      if (dflt && dflt.sampleRate !== sr) btn('Compare: resampled', () => playLoop(dflt, null, Math.round(S * dflt.sampleRate / sr), Math.round(E * dflt.sampleRate / sr), Math.max(0, E / sr - 4), statusEl, 'Resampled to ' + dflt.sampleRate + ' Hz'), true);
+      btn('Stop', stopAll, true);
+    }
+  }
+
+  async function handleFiles(list) {
+    const files = [...list]; if (!files.length) return;
+    $('#status').textContent = `Analyzing ${files.length} file${files.length > 1 ? 's' : ''}…`;
+    for (const f of files) { try { await handleFile(f); } catch (e) { results.files.push({ name: f.name, error: String(e) }); writeOut(); } }
+    $('#status').textContent = 'Done. Add more files, or copy the results below.';
+  }
+
+  $('#pick').addEventListener('change', (e) => handleFiles(e.target.files));
+  const drop = $('#drop');
+  drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('over'); handleFiles(e.dataTransfer.files); });
+  $('#copy').addEventListener('click', async () => {
+    writeOut();
+    try { await navigator.clipboard.writeText($('#out').value); $('#copied').textContent = 'Copied.'; }
+    catch (_) { $('#out').select(); $('#copied').textContent = 'Clipboard is blocked here. The text is selected; copy it manually.'; }
+  });
+  probeEnv();
+})();
+</script>
+</body>
+</html>

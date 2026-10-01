@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>VGM Loop</title>
+</head>
+<body>
+    <div id="VgmLoopConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-checkbox">
+        <div data-role="content">
+            <div class="content-primary">
+                <form id="VgmLoopConfigForm">
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label class="emby-checkbox-label">
+                            <input id="EnablePlayer" name="EnablePlayer" type="checkbox" is="emby-checkbox" />
+                            <span>Enable VGM Loop player</span>
+                        </label>
+                        <div class="fieldDescription checkboxFieldDescription">
+                            Injects the loop-aware audio player into the web client. After changing this, hard-refresh open browser tabs.
+                        </div>
+                    </div>
+                    <div>
+                        <button is="emby-button" type="submit" class="raised button-submit block emby-button">
+                            <span>Save</span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        <script type="text/javascript">
+            var VgmLoopConfig = {
+                pluginUniqueId: 'f19dceed-5dce-4a6e-b77c-1b0ccdf8709a'
+            };
+
+            document.querySelector('#VgmLoopConfigPage')
+                .addEventListener('pageshow', function () {
+                    Dashboard.showLoadingMsg();
+                    ApiClient.getPluginConfiguration(VgmLoopConfig.pluginUniqueId).then(function (config) {
+                        document.querySelector('#EnablePlayer').checked = config.EnablePlayer;
+                        Dashboard.hideLoadingMsg();
+                    });
+                });
+
+            document.querySelector('#VgmLoopConfigForm')
+                .addEventListener('submit', function (e) {
+                    Dashboard.showLoadingMsg();
+                    ApiClient.getPluginConfiguration(VgmLoopConfig.pluginUniqueId).then(function (config) {
+                        config.EnablePlayer = document.querySelector('#EnablePlayer').checked;
+                        ApiClient.updatePluginConfiguration(VgmLoopConfig.pluginUniqueId, config).then(function (result) {
+                            Dashboard.processPluginConfigurationUpdateResult(result);
+                        });
+                    });
+
+                    e.preventDefault();
+                    return false;
+                });
+        </script>
+    </div>
+</body>
+</html>
