@@ -1,1 +1,20 @@
-[]
+[
+  {
+    "guid": "f19dceed-5dce-4a6e-b77c-1b0ccdf8709a",
+    "versions": [
+      {
+        "version": "0.5.0.0",
+        "changelog": "Next skips to the next track in Repeat One (Repeat One stays on; a track that ends by itself still repeats). Includes all earlier features: seamless loop playback with Repeat One for FLAC, Ogg Vorbis and Opus.",
+        "targetAbi": "12.1.0.0",
+        "sourceUrl": "https://github.com/davyf33/jellyfin-plugin-vgmloop/releases/download/v0.5.0.0/vgm-loop_0.5.0.0.zip",
+        "checksum": "c05a13190541a6d6a2e742ee074bb253",
+        "timestamp": "2026-10-01T02:17:50Z"
+      }
+    ],
+    "name": "VGM Loop",
+    "description": "Seamless, sample-accurate looping of LOOPSTART/LOOPLENGTH-tagged FLAC, Ogg Vorbis and Opus in the Jellyfin web client, tied to the Repeat One button. No re-encoding.",
+    "overview": "Seamless tagged-loop playback for video game music",
+    "owner": "davyf33",
+    "category": "General"
+  }
+]
