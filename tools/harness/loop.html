@@ -199,6 +199,49 @@ document.getElementById('run').addEventListener('click', async () => {
     await p.stop(true);
     check('stop(true): stopped + fade + context closed', (await stopped) && performance.now() - t0 >= 250 && ctx2.state === 'closed', Math.round(performance.now() - t0));
 
+    // --- Preloading the next loop track (queue: flac -> opus)
+    const queueItems = [{ Id: 'flac', ServerId: 's', Type: 'Audio', Name: 'flac' }, { Id: 'opus', ServerId: 's', Type: 'Audio', Name: 'opus' }];
+    let queueIndex = 0;
+    deps.playbackManager._playQueueManager = { getPlaylist: () => queueItems, getCurrentPlaylistIndex: () => queueIndex, getRepeatMode: () => repeatMode };
+    repeatMode = 'RepeatNone';
+    playing = waitFor(p, 'playing', 8000);
+    await p.play(opts('flac'));
+    await playing;
+    check('preload: nothing before the delay', !p._prefetch);
+    await sleep(4300);
+    check('preload: started for the next queue item', p._prefetch && p._prefetch.itemId === 'opus', p._prefetch && p._prefetch.itemId);
+    const pre = p._prefetch && await p._prefetch.promise;
+    check('preload: decoded at native rate (desktop)', pre && pre.buffer && pre.buffer.sampleRate === 48000 && pre.buffer.length === 3524459, pre && pre.buffer && [pre.buffer.sampleRate, pre.buffer.length]);
+    // playbackManager: stop(false) then play(next)
+    await p.stop(false);
+    check('preload: kept across stop(false)', p._prefetch && p._prefetch.itemId === 'opus');
+    queueIndex = 1;
+    const infoLogs = [];
+    const origInfo = console.info; console.info = (...a) => { infoLogs.push(a.join(' ')); origInfo.apply(console, a); };
+    playing = waitFor(p, 'playing', 8000);
+    const tStart = performance.now();
+    await p.play(opts('opus'));
+    const startMs = performance.now() - tStart;
+    console.info = origInfo;
+    check('preload: used by play()', (await playing) && infoLogs.some((l) => l.includes('preloaded+decoded')) && p._prefetch === null, infoLogs.filter((l) => l.includes('loop engine')));
+    check('preload: fast start (< 400 ms)', startMs < 400, Math.round(startMs));
+    const pErr = await seamExact(p._loop.buffer, 295979, 3524459, p._loop.source);
+    check('preload: seam still sample-exact', pErr < 1e-9, pErr);
+    await sleep(4300);
+    check('preload: none at the end of the queue in Repeat off', !p._prefetch);
+    await p.stop(false);
+    repeatMode = 'RepeatAll';
+    queueIndex = 0;
+    playing = waitFor(p, 'playing', 8000);
+    await p.play(opts('flac'));
+    await playing; await sleep(4300);
+    check('preload: started again', p._prefetch && p._prefetch.itemId === 'opus');
+    await p.stop(false);
+    await p.play(opts('vorbis')); // user picked something else
+    check('preload: discarded when a different track plays', p._prefetch === null);
+    await p.stop(true);
+    delete deps.playbackManager._playQueueManager;
+
     // --- Fallbacks
     repeatMode = 'RepeatOne';
     playing = waitFor(p, 'playing', 8000);

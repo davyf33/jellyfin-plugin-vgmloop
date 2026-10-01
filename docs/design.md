@@ -67,6 +67,12 @@ after the first track has started, the restore also tells the loop engine to re-
 position is `pos0 + (ctx.currentTime − ctxTime0) × rate`, wrapped into `[loopStart, loopEnd)` while looping, so the
 seek bar shows the real file timeline and jumps back at the seam. Seeking restarts the source at the new offset.
 
+**Preloading.** A few seconds after a track starts, the player looks up the queue item Next would lead to
+(`nextQueueItem()`); if LoopInfo says it loops, its original bytes are fetched and, on desktop and below 150 MB
+decoded, decoded with an `OfflineAudioContext` at the native rate (an `AudioBuffer` is not tied to a context). One slot
+only: playing any other track discards it, and a failed preload just means a normal load. iOS preloads bytes only.
+`?vgmloop=prefetch-off` disables it per browser.
+
 **Played status.** When a loop track that has crossed the seam is stopped, the reported stop position is the loop
 end (`stopReportPosition()`), so Jellyfin counts it as played.
 

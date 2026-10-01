@@ -2,7 +2,7 @@
 
 Seamless, sample-accurate looping of video game music in the Jellyfin **web client**. FLAC, Ogg Vorbis and Ogg Opus files tagged with `LOOPSTART` / `LOOPLENGTH` (or `LOOPEND`, `LOOP_START`, …) loop forever with no gap or click when **Repeat One** is on. Files are never re-encoded or modified.
 
-Status: **v1 feature-complete** (milestones 1–5). Tested on Chrome, Firefox and Safari on macOS, Safari on iPhone and the Jellyfin iOS app; see [docs/browser-notes.md](docs/browser-notes.md). How it works: [docs/design.md](docs/design.md).
+Status: **1.0**. Tested on Chrome, Firefox and Safari on macOS, Safari on iPhone and the Jellyfin iOS app; see [docs/browser-notes.md](docs/browser-notes.md). How it works: [docs/design.md](docs/design.md).
 
 Requires Jellyfin **12.1**. Works in the web client and in apps that embed it (e.g. the Jellyfin iOS app); native players such as Finamp or Jellyfin Media Player are not affected.
 
@@ -18,8 +18,10 @@ Requires Jellyfin **12.1**. Works in the web client and in apps that embed it (e
 - Switching repeat mid-track takes effect immediately. Leaving Repeat One lets the current pass finish and the track
   play out; switching to Repeat One starts looping unless the loop is already behind you (an outro).
 - Tracks without loop tags, and MP3/AAC files, play exactly as with the stock player.
-- Loop tracks are downloaded whole and decoded in the browser (a 4-minute stereo track is ~90 MB of memory), so there's
-  a short pause before they start. Playback speed control is disabled for loop tracks.
+- Loop tracks are downloaded whole and decoded in the browser (a 4-minute stereo track is ~90 MB of memory). To avoid a
+  pause between tracks, the next track in the queue is preloaded a few seconds into the current one when it has loop
+  tags: downloaded and decoded on desktop, downloaded only on iPhone/iPad (to keep memory low). Skipping elsewhere
+  discards the preload. Playback speed control is disabled for loop tracks.
 
 ## Install (plugin repository)
 
@@ -55,6 +57,7 @@ Per-browser switches (work on phones too; open the URL once, the setting sticks 
 | `https://SERVER/web/?vgmloop=on` | VGM Loop player again |
 | `https://SERVER/web/?vgmloop=stream` | loop tracks play through a hidden `<audio>` element (fallback if media keys / Now Playing don't control loop tracks in some browser) |
 | `https://SERVER/web/?vgmloop=direct` | loop tracks play straight to Web Audio output (default) |
+| `https://SERVER/web/?vgmloop=prefetch-off` | don't preload the next loop track (e.g. to save mobile data); `prefetch-on` restores it |
 
 Differences from the stock audio player: no hls.js, so audio transcodes are delivered as progressive HTTP (aac/mp3/opus) and the
 "always remux FLAC/MP3" settings are ignored for music (the original file is played directly). When audio normalization is

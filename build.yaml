@@ -1,7 +1,7 @@
 ---
 name: "VGM Loop"
 guid: "f19dceed-5dce-4a6e-b77c-1b0ccdf8709a"
-version: "0.6.0.0"
+version: "1.0.0.0"
 targetAbi: "12.1.0.0"
 framework: "net10.0"
 owner: "davyf33"
@@ -14,4 +14,4 @@ category: "General"
 artifacts:
   - "Jellyfin.Plugin.VgmLoop.dll"
 changelog: >
-  0.6.0.0: The repeat mode chosen for music now sticks across new tracks, albums and page reloads.
+  1.0.0.0: Preloads the next loop track so it starts without a pause. First stable release.

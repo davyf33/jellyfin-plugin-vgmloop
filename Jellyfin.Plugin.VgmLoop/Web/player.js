@@ -198,6 +198,21 @@
         return true;
     }
 
+    /**
+     * The queue item a user's Next (or the automatic advance in Repeat None / All) leads to: the following item,
+     * wrapping to the first unless repeat is off. Null when there is none or it is the current item again.
+     */
+    function nextQueueItem(playlist, index, repeatMode) {
+        if (!Array.isArray(playlist) || !(index >= 0) || index >= playlist.length) return null;
+        let i = index + 1;
+        if (i >= playlist.length) {
+            if (repeatMode === 'RepeatNone' || !repeatMode) return null;
+            i = 0;
+        }
+        const item = playlist[i];
+        return item && i !== index ? item : null;
+    }
+
     function isMusicQueue(items) {
         return Array.isArray(items) && items.length > 0 && items.every((i) => i && i.Type === 'Audio');
     }
@@ -253,7 +268,8 @@
         loopEndSeconds,
         installNextTrackOverride,
         installStickyRepeat,
-        isMusicQueue
+        isMusicQueue,
+        nextQueueItem
     };
 
     if (typeof module === 'object' && module.exports) {
@@ -641,6 +657,9 @@
     }
 
     const AudioContextClass = root.AudioContext || root.webkitAudioContext;
+    const OfflineAudioContextClass = root.OfflineAudioContext || root.webkitOfflineAudioContext;
+    const PREFETCH_DELAY_MS = 4000; // let the current track settle first
+    const PREFETCH_DECODE_MAX_MB = 150; // decode ahead only below this (desktop); iOS preloads bytes only
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
     function withTimeout(promise, ms, what) {
@@ -656,7 +675,8 @@
     // ---- per-browser switches (localStorage), settable from a URL because phones have no console:
     //   /web/?vgmloop=off | on          disable / re-enable the player in this browser
     //   /web/?vgmloop=stream | direct   loop-engine output via <audio srcObject=MediaStream> | AudioContext.destination
-    const SETTINGS = { disabled: 'vgmloop.disabled', output: 'vgmloop.output', repeat: 'vgmloop.repeatMode' };
+    //   /web/?vgmloop=prefetch-off | prefetch-on   preloading of the next loop track
+    const SETTINGS = { disabled: 'vgmloop.disabled', output: 'vgmloop.output', repeat: 'vgmloop.repeatMode', prefetch: 'vgmloop.prefetch' };
 
     function readSetting(key) {
         try {
@@ -686,13 +706,29 @@
         if (v === 'off') writeSetting(SETTINGS.disabled, '1');
         else if (v === 'on') writeSetting(SETTINGS.disabled, null);
         else if (v === 'stream' || v === 'direct') writeSetting(SETTINGS.output, v);
+        else if (v === 'prefetch-off') writeSetting(SETTINGS.prefetch, 'off');
+        else if (v === 'prefetch-on') writeSetting(SETTINGS.prefetch, null);
         else return;
-        pendingNotice = 'VGM Loop: ' + (v === 'off' ? 'disabled in this browser' : v === 'on' ? 'enabled' : 'loop output = ' + v);
+        pendingNotice = 'VGM Loop: ' + (v === 'off' ? 'disabled in this browser' : v === 'on' ? 'enabled'
+            : v.startsWith('prefetch') ? 'preloading ' + v.slice(9) : 'loop output = ' + v);
         console.info(TAG, pendingNotice);
     })();
 
     function outputMode() {
         return readSetting(SETTINGS.output) === 'stream' ? 'stream' : 'direct';
+    }
+
+    /**
+     * Fetches the original file bytes (independent of playMethod: the user may remux or transcode FLAC) and drops
+     * anything before the audio stream (Firefox can't decode FLAC with an ID3v2 prefix).
+     */
+    async function fetchOriginal(apiClient, itemId, mediaSourceId, audioDataOffset, signal) {
+        const params = { static: true, ApiKey: apiClient.accessToken() };
+        if (mediaSourceId) params.mediaSourceId = mediaSourceId;
+        const resp = await fetch(apiClient.getUrl('Audio/' + itemId + '/stream', params), { signal });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status + ' fetching the original file');
+        const bytes = await resp.arrayBuffer();
+        return audioDataOffset > 0 ? bytes.slice(audioDataOffset) : bytes;
     }
 
     /**
@@ -805,7 +841,8 @@
          * Resolves true once audio is playing, 'aborted' if stop()/another play() superseded it.
          * Throws on any failure so the player can fall back to the plain engine.
          */
-        async play(options, info) {
+        /** `prefetched` (optional) is a promise of { bytes } or { buffer } prepared by the player's preloader. */
+        async play(options, info, prefetched) {
             const gen = ++this._gen;
             this._teardown();
             this._clear();
@@ -814,35 +851,40 @@
 
             const item = options.item;
             const apiClient = this.deps.ServerConnections.getApiClient(item.ServerId);
-            // Always the original bytes, independent of playMethod (the user may remux or transcode FLAC).
-            const url = apiClient.getUrl('Audio/' + item.Id + '/stream', {
-                static: true,
-                mediaSourceId: options.mediaSource.Id,
-                ApiKey: apiClient.accessToken()
-            });
 
             this.deps.loading.show();
             const t0 = performance.now();
             try {
-                const abort = new AbortController();
-                this._abort = abort;
-                let resp;
-                try {
-                    resp = await fetch(url, { signal: abort.signal });
-                } catch (e) {
+                let buffer = null;
+                let bytes = null;
+                let from = 'network';
+                if (prefetched) {
+                    const got = await prefetched.catch(() => null);
                     if (gen !== this._gen) return 'aborted';
-                    throw e;
+                    if (got && got.buffer && got.buffer.sampleRate === info.sampleRate) {
+                        buffer = got.buffer;
+                        from = 'preloaded+decoded';
+                    } else if (got && got.bytes) {
+                        bytes = got.bytes;
+                        from = 'preloaded';
+                    }
                 }
-                if (!resp.ok) throw new Error('HTTP ' + resp.status + ' fetching the original file');
-                let bytes = await resp.arrayBuffer();
-                if (gen !== this._gen) return 'aborted';
+
+                if (!buffer && !bytes) {
+                    const abort = new AbortController();
+                    this._abort = abort;
+                    try {
+                        bytes = await fetchOriginal(apiClient, item.Id, options.mediaSource.Id, info.audioDataOffset, abort.signal);
+                    } catch (e) {
+                        if (gen !== this._gen) return 'aborted';
+                        throw e;
+                    }
+                    if (gen !== this._gen) return 'aborted';
+                }
                 const t1 = performance.now();
 
-                // Firefox can't decode FLAC with an ID3v2 prefix; drop everything before the audio stream.
-                if (info.audioDataOffset > 0) bytes = bytes.slice(info.audioDataOffset);
-
                 const ctx = contexts.get(info.sampleRate);
-                const buffer = await ctx.decodeAudioData(bytes);
+                if (!buffer) buffer = await ctx.decodeAudioData(bytes);
                 if (gen !== this._gen) return 'aborted';
 
                 if (buffer.sampleRate !== info.sampleRate) {
@@ -875,7 +917,7 @@
                 if (ctx.state !== 'running') throw new Error('AudioContext is ' + ctx.state + ' (autoplay policy?)');
 
                 console.info(TAG, `loop engine (${contexts.mode}): ${info.codec} ${info.sampleRate} Hz, loop ${info.loopStart}..${info.loopEnd}` +
-                    ` (${info.convention || ''}), fetch ${Math.round(t1 - t0)} ms, decode ${Math.round(performance.now() - t1)} ms`);
+                    ` (${info.convention || ''}), ${from}: fetch ${Math.round(t1 - t0)} ms, decode ${Math.round(performance.now() - t1)} ms`);
                 this._startTimer();
                 this.player._trigger('playing');
                 return true;
@@ -1115,6 +1157,8 @@
             this._loop = new LoopEngine(this);
             this._engine = this._plain;
             this._autoAdvanceAt = 0;
+            this._prefetch = null;
+            this._prefetchTimer = null;
             if (!isDisabledLocally()) {
                 installNextTrackOverride(deps.playbackManager, (p) => p === this, () => this._isAutoAdvance());
                 installStickyRepeat(deps.playbackManager && deps.playbackManager._playQueueManager, {
@@ -1133,6 +1177,72 @@
                 pendingNotice = null;
                 setTimeout(() => deps.toast(msg), 1500); // after the app shell has rendered
             }
+        }
+
+        // ---- preloading the next loop track (one slot)
+
+        _dropPrefetch() {
+            clearTimeout(this._prefetchTimer);
+            this._prefetchTimer = null;
+            const slot = this._prefetch;
+            this._prefetch = null;
+            if (slot) slot.abort.abort();
+        }
+
+        /** Hands over the preload for `itemId` (a promise of { bytes } / { buffer }), discarding any other. */
+        _takePrefetch(itemId) {
+            clearTimeout(this._prefetchTimer);
+            this._prefetchTimer = null;
+            const slot = this._prefetch;
+            if (slot && slot.itemId === itemId) {
+                this._prefetch = null;
+                return slot.promise;
+            }
+            this._dropPrefetch();
+            return null;
+        }
+
+        _schedulePrefetch(currentItem) {
+            clearTimeout(this._prefetchTimer);
+            if (!AudioContextClass || readSetting(SETTINGS.prefetch) === 'off') return;
+            const gen = this._playGen;
+            this._prefetchTimer = setTimeout(() => {
+                this._prefetchTimer = null;
+                this._startPrefetch(currentItem, gen).catch((e) => console.debug(TAG, 'preload skipped:', e && e.message));
+            }, PREFETCH_DELAY_MS);
+        }
+
+        async _startPrefetch(currentItem, gen) {
+            const pm = this._deps.playbackManager;
+            const queue = pm && pm._playQueueManager;
+            if (!queue || gen !== this._playGen) return;
+            const next = nextQueueItem(queue.getPlaylist(), queue.getCurrentPlaylistIndex(), queue.getRepeatMode());
+            if (!next || next.Type !== 'Audio' || !next.Id || (currentItem && next.Id === currentItem.Id)) return;
+            if (this._prefetch && this._prefetch.itemId === next.Id) return;
+            this._dropPrefetch();
+
+            const info = await this._getLoopInfo({ item: next, mediaSource: null });
+            if (gen !== this._playGen || !isLoopable(info)) return;
+
+            const apiClient = this._deps.ServerConnections.getApiClient(next.ServerId);
+            const abort = new AbortController();
+            const decodeAhead = !browser.iOS && !!OfflineAudioContextClass
+                && (info.totalSamples * Math.max(1, info.channels) * 4) / 1048576 <= PREFETCH_DECODE_MAX_MB;
+            const slot = { itemId: next.Id, abort };
+            slot.promise = (async () => {
+                const bytes = await fetchOriginal(apiClient, next.Id, null, info.audioDataOffset, abort.signal);
+                if (!decodeAhead) return { bytes };
+                // An AudioBuffer isn't tied to a context; decoding at the native rate here matches the engine's decode.
+                const buffer = await new OfflineAudioContextClass(Math.max(1, info.channels), 1, info.sampleRate).decodeAudioData(bytes);
+                return abort.signal.aborted ? null : { buffer };
+            })();
+            this._prefetch = slot;
+            slot.promise.then(
+                (r) => r && console.info(TAG, 'preloaded next loop track ' + (next.Name || next.Id) + (r.buffer ? ' (decoded)' : ' (bytes)')),
+                (e) => {
+                    if (!abort.signal.aborted) console.warn(TAG, 'preload failed (will load normally):', e && e.message);
+                    if (this._prefetch === slot) this._prefetch = null;
+                });
         }
 
         /** A track just ended by itself; the next nextTrack() call is playbackManager's auto-advance. */
@@ -1183,6 +1293,7 @@
         async play(options) {
             const gen = ++this._playGen;
             this._autoAdvanceAt = 0;
+            const preloaded = options.item && options.item.Id ? this._takePrefetch(options.item.Id) : this._takePrefetch(null);
             let info = null;
             if (AudioContextClass && options.item && options.item.Id && options.mediaSource) {
                 try {
@@ -1196,7 +1307,8 @@
             if (isLoopable(info)) {
                 this._engine = this._loop;
                 try {
-                    await this._loop.play(options, info);
+                    const r = await this._loop.play(options, info, preloaded);
+                    if (r === true) this._schedulePrefetch(options.item);
                     return undefined;
                 } catch (e) {
                     if (gen !== this._playGen) return undefined;
@@ -1207,17 +1319,23 @@
             }
 
             this._engine = this._plain;
-            return this._plain.play(options);
+            const r = this._plain.play(options);
+            r.then(() => {
+                if (gen === this._playGen) this._schedulePrefetch(options.item);
+            }, () => {});
+            return r;
         }
 
         stop(destroyPlayer) {
             this._playGen++;
+            if (destroyPlayer) this._dropPrefetch(); // a track change (stop(false)) keeps the preload for the next play()
             return Promise.resolve(this._engine.stop(destroyPlayer));
         }
 
         destroy() {
             this._playGen++;
             this._autoAdvanceAt = 0;
+            this._dropPrefetch();
             this._plain.destroy();
             this._loop.destroy();
         }

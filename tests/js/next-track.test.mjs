@@ -111,3 +111,18 @@ test('installs once', () => {
     assert.deepEqual(pm.played, [1], 'not double-wrapped');
     assert.equal(installNextTrackOverride(null, () => true, () => false), false);
 });
+
+const { nextQueueItem } = require('../../Jellyfin.Plugin.VgmLoop/Web/player.js');
+
+test('nextQueueItem follows Next semantics', () => {
+    const list = [{ Id: 'a' }, { Id: 'b' }, { Id: 'c' }];
+    assert.equal(nextQueueItem(list, 0, 'RepeatNone').Id, 'b');
+    assert.equal(nextQueueItem(list, 2, 'RepeatNone'), null, 'end of queue');
+    assert.equal(nextQueueItem(list, 2, 'RepeatAll').Id, 'a');
+    assert.equal(nextQueueItem(list, 2, 'RepeatOne').Id, 'a', 'Next wraps in Repeat One too');
+    assert.equal(nextQueueItem(list, 1, 'RepeatOne').Id, 'c');
+    assert.equal(nextQueueItem([{ Id: 'a' }], 0, 'RepeatAll'), null, 'single item is not "next"');
+    assert.equal(nextQueueItem(list, -1, 'RepeatAll'), null);
+    assert.equal(nextQueueItem(list, 5, 'RepeatAll'), null);
+    assert.equal(nextQueueItem(null, 0, 'RepeatAll'), null);
+});
