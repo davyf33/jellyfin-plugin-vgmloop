@@ -58,6 +58,11 @@ In Repeat One, jellyfin-web's Next would replay the current track; `installNextT
 Repeat One stays selected. A natural end marks the following `nextTrack()` as an automatic advance, which keeps the
 stock behaviour.
 
+**Sticky repeat.** `PlayQueueManager.setPlaylist` (every new queue) and `reset` (queue ended) set the repeat mode to
+`RepeatNone`. `installStickyRepeat()` records the mode chosen while a music queue is loaded (in `localStorage`,
+`vgmloop.repeatMode`) and re-applies it when a new all-music queue starts. Because jellyfin-web calls `setPlaylist`
+after the first track has started, the restore also tells the loop engine to re-check the mode.
+
 **Position model.** An anchor `{ ctxTime0, pos0, looping }` is set on every start, seek and loop toggle. The file
 position is `pos0 + (ctx.currentTime − ctxTime0) × rate`, wrapped into `[loopStart, loopEnd)` while looping, so the
 seek bar shows the real file timeline and jumps back at the seam. Seeking restarts the source at the new offset.

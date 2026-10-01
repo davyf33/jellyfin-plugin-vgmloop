@@ -198,6 +198,43 @@
         return true;
     }
 
+    function isMusicQueue(items) {
+        return Array.isArray(items) && items.length > 0 && items.every((i) => i && i.Type === 'Audio');
+    }
+
+    /**
+     * jellyfin-web resets the repeat mode to RepeatNone whenever a new queue starts (PlayQueueManager.setPlaylist,
+     * e.g. clicking another track in an album) or the queue ends (reset). Remember the mode last chosen for music
+     * and re-apply it when a new music queue starts. Non-music queues (videos etc.) keep the stock reset.
+     * `store` is { get(): string|null, set(mode) } for persistence; `onRestore(mode)` runs after a restore, because
+     * jellyfin-web calls setPlaylist only after the first track has started. Returns false if already installed.
+     */
+    function installStickyRepeat(queue, store, onRestore) {
+        if (!queue || typeof queue.setPlaylist !== 'function' || typeof queue.setRepeatMode !== 'function' || queue.__vgmLoopSticky) return false;
+        const MODES = ['RepeatNone', 'RepeatAll', 'RepeatOne'];
+        const setRepeatMode = queue.setRepeatMode;
+        const setPlaylist = queue.setPlaylist;
+
+        queue.setRepeatMode = function (value) {
+            const result = setRepeatMode.apply(this, arguments);
+            if (MODES.includes(value) && isMusicQueue(this.getPlaylist())) store.set(value);
+            return result;
+        };
+
+        queue.setPlaylist = function (items) {
+            const result = setPlaylist.apply(this, arguments);
+            const saved = store.get();
+            if (MODES.includes(saved) && isMusicQueue(items)) {
+                setRepeatMode.call(this, saved);
+                if (onRestore) onRestore(saved);
+            }
+            return result;
+        };
+
+        queue.__vgmLoopSticky = true;
+        return true;
+    }
+
     const core = {
         adaptDeviceProfile,
         normalizationGainDb,
@@ -214,7 +251,9 @@
         stopReportPosition,
         msToSamples,
         loopEndSeconds,
-        installNextTrackOverride
+        installNextTrackOverride,
+        installStickyRepeat,
+        isMusicQueue
     };
 
     if (typeof module === 'object' && module.exports) {
@@ -617,7 +656,7 @@
     // ---- per-browser switches (localStorage), settable from a URL because phones have no console:
     //   /web/?vgmloop=off | on          disable / re-enable the player in this browser
     //   /web/?vgmloop=stream | direct   loop-engine output via <audio srcObject=MediaStream> | AudioContext.destination
-    const SETTINGS = { disabled: 'vgmloop.disabled', output: 'vgmloop.output' };
+    const SETTINGS = { disabled: 'vgmloop.disabled', output: 'vgmloop.output', repeat: 'vgmloop.repeatMode' };
 
     function readSetting(key) {
         try {
@@ -1076,7 +1115,15 @@
             this._loop = new LoopEngine(this);
             this._engine = this._plain;
             this._autoAdvanceAt = 0;
-            installNextTrackOverride(deps.playbackManager, (p) => p === this, () => this._isAutoAdvance());
+            if (!isDisabledLocally()) {
+                installNextTrackOverride(deps.playbackManager, (p) => p === this, () => this._isAutoAdvance());
+                installStickyRepeat(deps.playbackManager && deps.playbackManager._playQueueManager, {
+                    get: () => readSetting(SETTINGS.repeat),
+                    set: (mode) => writeSetting(SETTINGS.repeat, mode)
+                }, () => {
+                    if (this._engine === this._loop) this._loop.onRepeatModeChange();
+                });
+            }
             deps.events.on(this, 'repeatmodechange', () => {
                 if (this._engine === this._loop) this._loop.onRepeatModeChange();
             });
