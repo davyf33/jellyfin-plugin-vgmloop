@@ -3,6 +3,14 @@
     "guid": "f19dceed-5dce-4a6e-b77c-1b0ccdf8709a",
     "versions": [
       {
+        "version": "1.0.0.0",
+        "changelog": "VGM Loop 1.0. Seamless looping of tagged FLAC, Ogg Vorbis and Opus tracks with Repeat One in the Jellyfin web client (desktop browsers, iPhone, Jellyfin iOS app). Next skips ahead in Repeat One, the repeat mode sticks across queues, and the next loop track is preloaded so it starts without a pause.",
+        "targetAbi": "12.1.0.0",
+        "sourceUrl": "https://github.com/davyf33/jellyfin-plugin-vgmloop/releases/download/v1.0.0.0/vgm-loop_1.0.0.0.zip",
+        "checksum": "9c47d1283abdaee5751ae565e9a35ce3",
+        "timestamp": "2026-10-01T03:22:52Z"
+      },
+      {
         "version": "0.6.0.0",
         "changelog": "The repeat mode you pick for music now sticks: starting another track or album keeps it, and it is remembered across page reloads. Video queues are unaffected.",
         "targetAbi": "12.1.0.0",
