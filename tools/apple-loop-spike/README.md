@@ -22,3 +22,16 @@ Results on macOS 26.5 (fixtures from the test suite):
 Jellyfin's on-the-fly FLAC transcode (`/Audio/{id}/stream.flac?audioCodec=flac`) of the Ogg files is also
 sample-exact (same frame count, offset 0, 24-bit), but it is streamed without a total-samples field, so `AVAudioFile`
 reports length 0; a fallback using it would have to read until EOF.
+
+## Engine tests
+
+`EngineTest.swift` exercises the Finamp iOS loop engine core (`ios/Runner/VgmLoopEngineCore.swift` in the Finamp
+`vgm-loop` branch) with offline rendering: looping through several seams, turning looping off mid-pass (the rest of the
+pass and the outro must follow sample-exactly), linear play to the end, seeking near the seam, position mapping and end
+detection. Swift only allows top-level code in `main.swift`, so compile a copy under that name:
+
+```bash
+mkdir -p /tmp/et && cp tools/apple-loop-spike/EngineTest.swift /tmp/et/main.swift
+swiftc -O -o /tmp/EngineTest /tmp/et/main.swift <finamp>/ios/Runner/VgmLoopEngineCore.swift
+/tmp/EngineTest fixtures/wii_menu.flac 197319 2349639
+```
