@@ -26,7 +26,7 @@ func run(start: AVAudioFramePosition, looping: Bool, frames: AVAudioFramePositio
     let engine = AVAudioEngine()
     let player = AVAudioPlayerNode()
     engine.attach(player)
-    let core = try VgmLoopEngineCore(buffer: decoded, loopStart: LS, loopEnd: LE, engine: engine, player: player)
+    let core = try VgmLoopEngineCore(source: DecodingBuffer(full: decoded), loopStart: LS, loopEnd: LE, engine: engine, player: player)
     try engine.enableManualRenderingMode(.offline, format: core.buffer.format, maximumFrameCount: 512)
     var rendered: AVAudioFramePosition = 0
     core.clockOverride = { rendered }
@@ -72,6 +72,21 @@ do {
     let lead = AVAudioFramePosition(VgmLoopEngineCore.followUpLead * rate)
     let s = { (p: AVAudioFramePosition) -> Float in p < total ? src[Int(p)] : 0 }
     print("file: \(Int(rate)) Hz, \(total) frames, loop \(LS)..\(LE)")
+
+    // 0. Progressive decoding produces exactly the same samples as a full decode.
+    do {
+        let progressive = try DecodingBuffer(url: URL(fileURLWithPath: args[1]))
+        var chunks = 0
+        progressive.decode { chunks += 1 }
+        let p = UnsafeBufferPointer(start: progressive.buffer.floatChannelData![0], count: Int(progressive.total))
+        var diff = 0
+        for i in 0..<min(p.count, src.count) where p[i] != src[i] { diff += 1 }
+        // CoreAudio's Vorbis decoder can return a few frames less than the header length in one go; the progressive
+        // decoder keeps the header length and pads the tail with silence.
+        let padOK = p.count >= src.count && p.count - src.count <= 1024 && p[src.count...].allSatisfy { $0 == 0 }
+        check("progressive decode matches full decode", progressive.complete && padOK && diff == 0,
+              "\(chunks) chunks, \(diff) differing samples, lengths \(p.count)/\(src.count)")
+    }
 
     // 1. Looping from 1 s before the seam through two seams.
     do {
