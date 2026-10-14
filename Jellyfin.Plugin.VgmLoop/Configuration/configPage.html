@@ -18,6 +18,15 @@
                             Injects the loop-aware audio player into the web client. After changing this, hard-refresh open browser tabs.
                         </div>
                     </div>
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label class="emby-checkbox-label">
+                            <input id="EnableDiscNames" name="EnableDiscNames" type="checkbox" is="emby-checkbox" />
+                            <span>Show disc names on album pages</span>
+                        </label>
+                        <div class="fieldDescription checkboxFieldDescription">
+                            Adds the disc name from the files' tags (DISCSUBTITLE, or TSST in MP3) next to "Disc 2" etc. Needs the player above to be enabled.
+                        </div>
+                    </div>
                     <div>
                         <button is="emby-button" type="submit" class="raised button-submit block emby-button">
                             <span>Save</span>
@@ -36,6 +45,7 @@
                     Dashboard.showLoadingMsg();
                     ApiClient.getPluginConfiguration(VgmLoopConfig.pluginUniqueId).then(function (config) {
                         document.querySelector('#EnablePlayer').checked = config.EnablePlayer;
+                        document.querySelector('#EnableDiscNames').checked = config.EnableDiscNames !== false;
                         Dashboard.hideLoadingMsg();
                     });
                 });
@@ -45,6 +55,7 @@
                     Dashboard.showLoadingMsg();
                     ApiClient.getPluginConfiguration(VgmLoopConfig.pluginUniqueId).then(function (config) {
                         config.EnablePlayer = document.querySelector('#EnablePlayer').checked;
+                        config.EnableDiscNames = document.querySelector('#EnableDiscNames').checked;
                         ApiClient.updatePluginConfiguration(VgmLoopConfig.pluginUniqueId, config).then(function (result) {
                             Dashboard.processPluginConfigurationUpdateResult(result);
                         });

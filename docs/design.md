@@ -34,6 +34,11 @@ inclusive. A loop must satisfy `0 <= start < end <= total` and be at least 0.1 s
 - `GET /VgmLoop/Items/{itemId}/LoopInfo` (authorized, per-user item visibility): codec, rate, channels, total
   samples, pre-skip, `audioDataOffset`, loop points, how the end was derived, raw tags, and a reason when there is no
   loop. Results are cached by path + size + mtime.
+- `GET /VgmLoop/Items/{itemId}/Discs` (authorized, per-user visibility; album or track id): the album's named
+  discs, `[{ discNumber, name, itemIds }]`. Names come from `DISCSUBTITLE` (Vorbis comments, MP4 freeform, ID3
+  `TXXX`), ID3 `TSST`, or a few other spellings. Tags are read with ATL, the tag library the server already loads;
+  the plugin compiles against it and doesn't ship its own copy. For each disc it reads up to three tracks and uses the
+  first name it finds. Results are cached by path + size + mtime. With "Show disc names" off, the list is empty.
 - `GET /VgmLoop/web/player.js` (anonymous; a script tag can't send auth headers).
 
 ## Client (`Web/player.js`)
@@ -75,6 +80,12 @@ only: playing any other track discards it, and a failed preload just means a nor
 
 **Played status.** When a loop track that has crossed the seam is stopped, the reported stop position is the loop
 end (`stopReportPosition()`), so Jellyfin counts it as played.
+
+**Disc names.** The album page renders its tracks as `<h2 class="listGroupHeader">Disc N</h2><div>…</div>` inside
+`#listChildrenCollapsible`. `installDiscNames()` watches the DOM for new headers, asks the Discs API once per album
+(keyed by the first track under a header, since the header text is localized), and appends ` · name` in a
+`span.vgmloop-discName`. jellyfin-web only shows disc headers when an album has more than one disc (or starts above
+disc 1), so a single-disc album shows no name.
 
 The pure functions (profile filter, position/wrap math, repeat transitions, loop-end rounding) are exported in Node
 and unit tested with `node:test`; `tools/harness/` drives the real engines in a browser with mocked jellyfin-web

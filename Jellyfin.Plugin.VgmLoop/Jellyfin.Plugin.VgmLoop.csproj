@@ -23,6 +23,10 @@
     <PackageReference Include="Jellyfin.Model" Version="12.2.0">
       <ExcludeAssets>runtime</ExcludeAssets>
     </PackageReference>
+    <!-- Tag reader for disc names. Not shipped: the server already loads this version (MediaBrowser.Providers). -->
+    <PackageReference Include="z440.atl.core" Version="7.18.0">
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </PackageReference>
   </ItemGroup>
 
   <ItemGroup>

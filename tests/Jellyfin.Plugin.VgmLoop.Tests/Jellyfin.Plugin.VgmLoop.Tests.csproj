@@ -11,6 +11,8 @@
 
   <ItemGroup>
     <PackageReference Include="xunit.v3" Version="4.0.1" />
+    <!-- The plugin compiles against the server's copy of ATL; tests need the real assembly. -->
+    <PackageReference Include="z440.atl.core" Version="7.18.0" />
   </ItemGroup>
 
   <ItemGroup>
