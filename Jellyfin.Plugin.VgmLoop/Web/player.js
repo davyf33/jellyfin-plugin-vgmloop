@@ -319,7 +319,7 @@
     }
 
     /**
-     * Plain <audio> playback. Port of htmlAudioPlayer (jellyfin-web v12.1) without hls.js.
+     * Plain <audio> playback. Port of htmlAudioPlayer (jellyfin-web v12.1, unchanged in v12.2) without hls.js.
      * All events are raised on the owning player.
      */
     class PlainEngine {

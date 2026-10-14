@@ -4,7 +4,7 @@ Seamless, sample-accurate looping of video game music in the Jellyfin **web clie
 
 Status: **1.0**. Tested on Chrome, Firefox and Safari on macOS, Safari on iPhone and the Jellyfin iOS app; see [docs/browser-notes.md](docs/browser-notes.md). How it works: [docs/design.md](docs/design.md).
 
-Requires Jellyfin **12.1**. Works in the web client and in apps that embed it (e.g. the Jellyfin iOS app); native players such as Finamp or Jellyfin Media Player are not affected.
+Requires Jellyfin **12.2** (for 12.1, install VGM Loop 1.0). Works in the web client and in apps that embed it (e.g. the Jellyfin iOS app); native players such as Finamp or Jellyfin Media Player are not affected.
 
 ## How it works
 
