@@ -23,13 +23,30 @@ Requires Jellyfin **12.2** (for 12.1, install VGM Loop 1.0). Works in the web cl
   tags: downloaded and decoded on desktop, downloaded only on iPhone/iPad (to keep memory low). Skipping elsewhere
   discards the preload. Playback speed control is disabled for loop tracks.
 
-## Disc names
+## Loop icon and disc names
 
-Albums with more than one disc show the disc name from the tags next to each header, like **Disc 2 · Arrange Album**.
+Tracks with loop tags get a small loop icon after the title in album and playlist track lists, so you can see which
+ones loop before you play them. To turn it off, uncheck **Show a loop icon on looping tracks** in the plugin settings.
+
+Albums with more than one disc show the disc name from the tags next to each header, like **Disc 2 - Arrange Album**.
 The plugin reads `DISCSUBTITLE` (FLAC, Ogg, M4A, and MP3 `TXXX`; this is what MusicBrainz Picard writes) or `TSST`
 (the ID3v2.4 "set subtitle" frame in MP3). `SETSUBTITLE`, `DISCNAME` and `DISCTITLE` also work. The plugin only reads
 the tags and doesn't modify your files. To turn it off, go to Dashboard → Plugins → VGM Loop and uncheck **Show disc
 names on album pages**.
+
+## Platform tags
+
+Add a `PLATFORM` tag to your files (for example `PLATFORM=Nintendo 3DS`) and the plugin tags each album with it after
+every library scan. Then in the music library, open Filter → Tags and pick a platform to see only those albums. The
+tag also shows on the album page, and clicking it lists everything on that platform. `CONSOLE` and `SYSTEM` work too.
+For a game that came out on more than one console, separate the values with `;` or use one tag per platform.
+
+The plugin reads the first few tracks of each album, so only one track needs the tag, though tagging every track is
+fine. It only adds the platform to the album in Jellyfin's database and never writes to your files. If you change or
+remove the tag later, the next scan updates the album. Tags you added yourself in Jellyfin are left alone, and so is
+an album whose Tags field you locked in the metadata editor. After installing, run a library scan (Dashboard →
+Libraries → Scan All Libraries) to tag what's already there. To turn it off, uncheck **Tag albums with their
+platform** in the plugin settings.
 
 ## Install (plugin repository)
 

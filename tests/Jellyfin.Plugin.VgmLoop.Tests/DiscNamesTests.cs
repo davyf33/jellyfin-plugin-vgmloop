@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using Jellyfin.Plugin.VgmLoop.Discs;
+using Jellyfin.Plugin.VgmLoop.Tags;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -104,7 +105,7 @@ public class DiscNamesTests
         var path = WriteTemp(".flac", Synth.Flac(44100, 2, 16, 441000, ["TITLE=Field", "DISCNUMBER=2", "DISCSUBTITLE=Arrange Album"]));
         try
         {
-            var service = new DiscInfoService(NullLogger<DiscInfoService>.Instance);
+            var service = new TagService(NullLogger<TagService>.Instance);
             Assert.Equal("Arrange Album", service.GetDiscName(path));
             Assert.Equal("Arrange Album", service.GetDiscName(path)); // cached
         }
@@ -117,10 +118,10 @@ public class DiscNamesTests
     [Fact]
     public void Service_ReadsTsstFromMp3()
     {
-        var path = WriteTemp(".mp3", Mp3WithId3Frames(("TIT2", "Field"), ("TPOS", "2/2"), ("TSST", "Sound Test")));
+        var path = WriteTemp(".mp3", Synth.Mp3WithId3Frames(("TIT2", "Field"), ("TPOS", "2/2"), ("TSST", "Sound Test")));
         try
         {
-            var service = new DiscInfoService(NullLogger<DiscInfoService>.Instance);
+            var service = new TagService(NullLogger<TagService>.Instance);
             Assert.Equal("Sound Test", service.GetDiscName(path));
         }
         finally
@@ -132,7 +133,7 @@ public class DiscNamesTests
     [Fact]
     public void Service_NoNameAndNoThrowForMissingOrUntaggedFiles()
     {
-        var service = new DiscInfoService(NullLogger<DiscInfoService>.Instance);
+        var service = new TagService(NullLogger<TagService>.Instance);
         Assert.Null(service.GetDiscName(Path.Combine(Path.GetTempPath(), "vgmloop-missing-" + Guid.NewGuid() + ".flac")));
 
         var path = WriteTemp(".flac", Synth.Flac(44100, 2, 16, 441000, ["TITLE=Field"]));
@@ -146,46 +147,10 @@ public class DiscNamesTests
         }
     }
 
-    private static string WriteTemp(string extension, byte[] bytes)
+    internal static string WriteTemp(string extension, byte[] bytes)
     {
         var path = Path.Combine(Path.GetTempPath(), "vgmloop-" + Guid.NewGuid().ToString("N") + extension);
         File.WriteAllBytes(path, bytes);
         return path;
     }
-
-    /// <summary>An ID3v2.4 tag with UTF-8 text frames, followed by a few silent MPEG-1 Layer III frames.</summary>
-    private static byte[] Mp3WithId3Frames(params (string Id, string Text)[] frames)
-    {
-        using var body = new MemoryStream();
-        foreach (var (id, text) in frames)
-        {
-            var payload = new byte[] { 3 }.Concat(Encoding.UTF8.GetBytes(text)).ToArray(); // 3 = UTF-8
-            body.Write(Encoding.ASCII.GetBytes(id));
-            body.Write(SyncSafe(payload.Length));
-            body.Write(new byte[2]); // flags
-            body.Write(payload);
-        }
-
-        using var ms = new MemoryStream();
-        ms.Write("ID3"u8);
-        ms.Write(new byte[] { 4, 0, 0 }); // v2.4.0, no flags
-        ms.Write(SyncSafe((int)body.Length));
-        body.WriteTo(ms);
-
-        // 128 kbit/s, 44.1 kHz, no padding: 417-byte frames.
-        for (var i = 0; i < 8; i++)
-        {
-            var frame = new byte[417];
-            frame[0] = 0xff;
-            frame[1] = 0xfb;
-            frame[2] = 0x90;
-            frame[3] = 0x64;
-            ms.Write(frame);
-        }
-
-        return ms.ToArray();
-    }
-
-    private static byte[] SyncSafe(int n)
-        => [(byte)((n >> 21) & 0x7f), (byte)((n >> 14) & 0x7f), (byte)((n >> 7) & 0x7f), (byte)(n & 0x7f)];
 }

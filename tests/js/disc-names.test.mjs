@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { discNamesForHeaders, normalizeItemId } = require('../../Jellyfin.Plugin.VgmLoop/Web/player.js');
+const { discNamesForHeaders, normalizeItemId, loopingIds, discNameSuffix } = require('../../Jellyfin.Plugin.VgmLoop/Web/player.js');
 
 const A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const B = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
@@ -36,4 +36,14 @@ test('missing or malformed responses give no names', () => {
     assert.deepEqual(discNamesForHeaders([A], { discs: 'nope' }), [null]);
     assert.deepEqual(discNamesForHeaders([A], { discs: [null, { name: '', itemIds: [A] }, { name: 'x' }] }), [null]);
     assert.deepEqual(discNamesForHeaders(undefined, { discs: [] }), []);
+});
+
+test('disc names read "Disc N - name"', () => {
+    assert.equal('Disc 2' + discNameSuffix('Arrange Album'), 'Disc 2 - Arrange Album');
+});
+
+test('loopingIds normalizes ids and tolerates bad responses', () => {
+    assert.deepEqual([...loopingIds({ loopItemIds: ['AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA', B, null] })], [A, B]);
+    assert.equal(loopingIds(null).size, 0);
+    assert.equal(loopingIds({ loopItemIds: 'nope' }).size, 0);
 });

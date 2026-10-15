@@ -270,6 +270,17 @@
         return (firstTrackIds || []).map((id) => byTrack.get(normalizeItemId(id)) || null);
     }
 
+    /** The set of normalized ids in a POST /VgmLoop/LoopStatus response. */
+    function loopingIds(response) {
+        const ids = response && Array.isArray(response.loopItemIds) ? response.loopItemIds : [];
+        return new Set(ids.map(normalizeItemId).filter((id) => id));
+    }
+
+    /** Text appended to a "Disc N" header: "Disc 2" becomes "Disc 2 - Arrange Album". */
+    function discNameSuffix(name) {
+        return ' - ' + name;
+    }
+
     const core = {
         adaptDeviceProfile,
         normalizationGainDb,
@@ -291,7 +302,9 @@
         isMusicQueue,
         nextQueueItem,
         normalizeItemId,
-        discNamesForHeaders
+        discNamesForHeaders,
+        loopingIds,
+        discNameSuffix
     };
 
     if (typeof module === 'object' && module.exports) {
@@ -1164,18 +1177,32 @@
         return readSetting(SETTINGS.disabled) === '1';
     }
 
+    // Loop icon: two arrows chasing each other round a stadium shape. Stroke-only, so it follows the text colour.
+    const LOOP_ICON_SVG = '<svg viewBox="0 0 32 24" width="1.4em" height="1.05em" fill="none" stroke="currentColor" stroke-width="2.4"'
+        + ' stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" style="vertical-align:-0.15em">'
+        + '<path d="M10 5A7 7 0 0 0 10 19H19M15.5 15.5L19 19L15.5 22.5M13 5H22A7 7 0 0 1 22 19M16.5 1.5L13 5L16.5 8.5"/></svg>';
+
     /**
-     * Album pages: appends the tagged disc name to each "Disc N" header ("Disc 2 · Arrange Album"). jellyfin-web
-     * renders the track list as <h2 class="listGroupHeader">Disc N</h2><div>tracks...</div> inside
-     * #listChildrenCollapsible, and re-renders it with innerHTML, so a MutationObserver picks up new headers.
+     * Track lists on album and playlist pages (#listChildrenCollapsible; jellyfin-web re-renders them with innerHTML,
+     * so a MutationObserver picks up new markup):
+     *  - "Disc N" headers get the tagged disc name: "Disc 2 - Arrange Album". The markup is
+     *    <h2 class="listGroupHeader">Disc N</h2><div>tracks...</div>; one Discs request per album.
+     *  - tracks with loop tags get a loop icon after the title; one LoopStatus request per batch of new tracks.
      */
-    function installDiscNames(deps) {
+    function installTrackListDecorations(deps) {
         if (!root.MutationObserver || !root.document || !root.document.body) return;
         const LISTS = '#listChildrenCollapsible';
         const HEADERS = 'h2.listGroupHeader:not([data-vgmloop-disc])';
-        const MAX_CACHED = 2000;
-        const byTrack = new Map(); // track id -> Promise<Discs response | null>
+        const TRACKS = '.listItem[data-type="Audio"][data-id]:not([data-vgmloop-loop])';
+        const MAX_CACHED = 5000;
+        const discsByTrack = new Map(); // track id -> Promise<Discs response | null>
+        const loopByTrack = new Map(); // track id -> boolean
         let scheduled = false;
+
+        function apiClientFor(el) {
+            const serverId = el.getAttribute('data-serverid');
+            return serverId ? deps.ServerConnections.getApiClient(serverId) : deps.ServerConnections.currentApiClient();
+        }
 
         function firstTrack(header) {
             const group = header.nextElementSibling;
@@ -1185,55 +1212,102 @@
 
         function getDiscs(track) {
             const trackId = normalizeItemId(track.getAttribute('data-id'));
-            let p = byTrack.get(trackId);
+            let p = discsByTrack.get(trackId);
             if (!p) {
-                const serverId = track.getAttribute('data-serverid');
-                const apiClient = serverId ? deps.ServerConnections.getApiClient(serverId) : deps.ServerConnections.currentApiClient();
+                const apiClient = apiClientFor(track);
                 if (!apiClient) return Promise.resolve(null);
-                if (byTrack.size > MAX_CACHED) byTrack.clear();
+                if (discsByTrack.size > MAX_CACHED) discsByTrack.clear();
                 p = withTimeout(apiClient.getJSON(apiClient.getUrl('VgmLoop/Items/' + trackId + '/Discs')), 5000, 'Discs')
                     .then((r) => {
                         // Every track of the album shares this answer, so other headers (and re-renders) skip the request.
-                        for (const d of (r && r.discs) || []) for (const id of d.itemIds || []) byTrack.set(normalizeItemId(id), p);
+                        for (const d of (r && r.discs) || []) for (const id of d.itemIds || []) discsByTrack.set(normalizeItemId(id), p);
                         return r;
                     })
                     .catch((e) => {
                         console.debug(TAG, 'disc names unavailable:', e && e.message);
                         return null;
                     });
-                byTrack.set(trackId, p);
+                discsByTrack.set(trackId, p);
             }
             return p;
         }
 
-        function label(header, name) {
+        function labelDisc(header, name) {
             if (!header.isConnected || header.querySelector('.vgmloop-discName')) return;
             const span = root.document.createElement('span');
             span.className = 'vgmloop-discName';
-            span.style.opacity = '0.75';
-            span.textContent = ' \u00b7 ' + name;
+            span.textContent = discNameSuffix(name);
             header.appendChild(span);
+        }
+
+        function addLoopIcon(track) {
+            const title = track.querySelector('.listItemBody .listItemBodyText');
+            if (!title || title.querySelector('.vgmloop-loopIcon')) return;
+            const icon = root.document.createElement('span');
+            icon.className = 'vgmloop-loopIcon';
+            icon.title = 'Loops seamlessly with Repeat One';
+            icon.setAttribute('role', 'img');
+            icon.setAttribute('aria-label', 'Loop track');
+            icon.style.marginLeft = '0.4em';
+            icon.style.opacity = '0.8';
+            icon.innerHTML = LOOP_ICON_SVG;
+            title.appendChild(icon);
+        }
+
+        function decorateDiscs(list) {
+            const headers = Array.from(list.querySelectorAll(HEADERS));
+            if (!headers.length) return;
+            const tracks = headers.map((h) => {
+                h.setAttribute('data-vgmloop-disc', '1');
+                return firstTrack(h);
+            });
+            const first = tracks.find((t) => t);
+            if (!first) return;
+            const ids = tracks.map((t) => (t ? t.getAttribute('data-id') : null));
+            getDiscs(first).then((r) => {
+                if (!r) return;
+                discNamesForHeaders(ids, r).forEach((name, i) => {
+                    if (name) labelDisc(headers[i], name);
+                });
+            });
+        }
+
+        function decorateLoops(list) {
+            const tracks = Array.from(list.querySelectorAll(TRACKS));
+            if (!tracks.length) return;
+            const unknown = [];
+            for (const t of tracks) {
+                t.setAttribute('data-vgmloop-loop', '1');
+                const id = normalizeItemId(t.getAttribute('data-id'));
+                if (loopByTrack.get(id) === true) addLoopIcon(t);
+                else if (!loopByTrack.has(id)) unknown.push(t);
+            }
+            if (!unknown.length) return;
+            const apiClient = apiClientFor(unknown[0]);
+            if (!apiClient || typeof apiClient.ajax !== 'function') return;
+            const ids = unknown.map((t) => normalizeItemId(t.getAttribute('data-id')));
+            withTimeout(apiClient.ajax({
+                type: 'POST',
+                url: apiClient.getUrl('VgmLoop/LoopStatus'),
+                data: JSON.stringify({ itemIds: ids }),
+                contentType: 'application/json',
+                dataType: 'json'
+            }), 10000, 'LoopStatus').then((r) => {
+                const looping = loopingIds(r);
+                if (loopByTrack.size > MAX_CACHED) loopByTrack.clear();
+                for (const id of ids) loopByTrack.set(id, looping.has(id));
+                for (const t of unknown) {
+                    if (looping.has(normalizeItemId(t.getAttribute('data-id')))) addLoopIcon(t);
+                }
+            }).catch((e) => console.debug(TAG, 'loop status unavailable:', e && e.message));
         }
 
         function scan() {
             scheduled = false;
-            // jellyfin-web keeps earlier pages in the DOM, so there can be several album lists; one request each.
+            // jellyfin-web keeps earlier pages in the DOM, so there can be several lists; each is handled on its own.
             for (const list of root.document.querySelectorAll(LISTS)) {
-                const headers = Array.from(list.querySelectorAll(HEADERS));
-                if (!headers.length) continue;
-                const tracks = headers.map((h) => {
-                    h.setAttribute('data-vgmloop-disc', '1');
-                    return firstTrack(h);
-                });
-                const first = tracks.find((t) => t);
-                if (!first) continue;
-                const ids = tracks.map((t) => (t ? t.getAttribute('data-id') : null));
-                getDiscs(first).then((r) => {
-                    if (!r) return;
-                    discNamesForHeaders(ids, r).forEach((name, i) => {
-                        if (name) label(headers[i], name);
-                    });
-                });
+                decorateDiscs(list);
+                decorateLoops(list);
             }
         }
 
@@ -1271,9 +1345,9 @@
                     if (this._engine === this._loop) this._loop.onRepeatModeChange();
                 });
                 try {
-                    installDiscNames(deps);
+                    installTrackListDecorations(deps);
                 } catch (e) {
-                    console.warn(TAG, 'disc names not installed:', e);
+                    console.warn(TAG, 'track list decorations not installed:', e);
                 }
             }
             deps.events.on(this, 'repeatmodechange', () => {

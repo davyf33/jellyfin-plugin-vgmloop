@@ -1,5 +1,5 @@
-using Jellyfin.Plugin.VgmLoop.Discs;
 using Jellyfin.Plugin.VgmLoop.Loop;
+using Jellyfin.Plugin.VgmLoop.Tags;
 using Jellyfin.Plugin.VgmLoop.Web;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Plugins;
@@ -18,6 +18,6 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
     {
         serviceCollection.AddTransient<IStartupFilter, WebInjectionStartupFilter>();
         serviceCollection.AddSingleton<LoopInfoService>();
-        serviceCollection.AddSingleton<DiscInfoService>();
+        serviceCollection.AddSingleton<TagService>();
     }
 }

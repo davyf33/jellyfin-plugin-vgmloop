@@ -7,6 +7,7 @@ using Jellyfin.Data.Enums;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.VgmLoop.Discs;
 using Jellyfin.Plugin.VgmLoop.Loop;
+using Jellyfin.Plugin.VgmLoop.Tags;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Library;
@@ -27,10 +28,13 @@ namespace Jellyfin.Plugin.VgmLoop.Api;
 [Route("VgmLoop")]
 public class LoopInfoController : ControllerBase
 {
+    /// <summary>Most ids one <c>LoopStatus</c> request checks.</summary>
+    public const int MaxLoopStatusItems = 1000;
+
     private readonly ILibraryManager _libraryManager;
     private readonly IAuthorizationContext _authorizationContext;
     private readonly LoopInfoService _loopInfoService;
-    private readonly DiscInfoService _discInfoService;
+    private readonly TagService _tagService;
     private readonly ILogger<LoopInfoController> _logger;
 
     /// <summary>
@@ -39,19 +43,19 @@ public class LoopInfoController : ControllerBase
     /// <param name="libraryManager">Library manager.</param>
     /// <param name="authorizationContext">Authorization context.</param>
     /// <param name="loopInfoService">Loop info service.</param>
-    /// <param name="discInfoService">Disc info service.</param>
+    /// <param name="tagService">Tag reader.</param>
     /// <param name="logger">Logger.</param>
     public LoopInfoController(
         ILibraryManager libraryManager,
         IAuthorizationContext authorizationContext,
         LoopInfoService loopInfoService,
-        DiscInfoService discInfoService,
+        TagService tagService,
         ILogger<LoopInfoController> logger)
     {
         _libraryManager = libraryManager;
         _authorizationContext = authorizationContext;
         _loopInfoService = loopInfoService;
-        _discInfoService = discInfoService;
+        _tagService = tagService;
         _logger = logger;
     }
 
@@ -136,7 +140,57 @@ public class LoopInfoController : ControllerBase
             .Select(t => new DiscTrack(t.Id, t.ParentIndexNumber, t.IndexNumber, t.Path))
             .ToList();
 
-        return new JsonResult(DiscsDto.From(album.Id, _discInfoService.GetDiscs(tracks)));
+        return new JsonResult(DiscsDto.From(album.Id, _tagService.GetDiscs(tracks)));
+    }
+
+    /// <summary>
+    /// Tells which of the given tracks have a playable loop, for the loop icon in track lists.
+    /// </summary>
+    /// <param name="request">Track ids (at most <see cref="MaxLoopStatusItems"/>; the rest are ignored).</param>
+    /// <returns>The ids of the tracks that loop. Ids the caller can't see, non-audio items and unreadable files are left out.</returns>
+    [HttpPost("LoopStatus")]
+    [Consumes("application/json")]
+    [Produces("application/json")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<ActionResult<LoopStatusDto>> GetLoopStatus([FromBody] LoopStatusRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var looping = new List<string>();
+        if (Plugin.Instance?.Configuration.EnableLoopIcons == false || request.ItemIds is null)
+        {
+            return new JsonResult(new LoopStatusDto { LoopItemIds = looping });
+        }
+
+        var auth = await _authorizationContext.GetAuthorizationInfo(HttpContext).ConfigureAwait(false);
+        var ids = request.ItemIds
+            .Take(MaxLoopStatusItems)
+            .Select(s => Guid.TryParse(s, out var g) ? g : Guid.Empty)
+            .Where(g => g != Guid.Empty)
+            .Distinct();
+        foreach (var id in ids)
+        {
+            BaseItem? item = auth.User is not null
+                ? _libraryManager.GetItemById<BaseItem>(id, auth.User)
+                : auth.IsApiKey ? _libraryManager.GetItemById(id) : null;
+            if (item is not AudioItem || string.IsNullOrEmpty(item.Path))
+            {
+                continue;
+            }
+
+            try
+            {
+                if (_loopInfoService.Get(item.Path).Loop.HasLoop)
+                {
+                    looping.Add(item.Id.ToString("N"));
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger.LogDebug(ex, "VGM Loop: could not read {Path}", item.Path);
+            }
+        }
+
+        return new JsonResult(new LoopStatusDto { LoopItemIds = looping });
     }
 
     /// <summary>

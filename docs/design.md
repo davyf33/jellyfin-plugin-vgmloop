@@ -29,6 +29,13 @@ the last 256 KB:
 `h:mm:ss(.fff)`. Start + length wins over an end tag; an end tag equal to start + length − 1 is recognised as
 inclusive. A loop must satisfy `0 <= start < end <= total` and be at least 0.1 s long.
 
+**Tags** (`Tags/`, `Discs/`, `Platforms/`). `TagService` reads each file's tags once with ATL, the tag library the
+server already loads (the plugin compiles against it and doesn't ship its own copy), and caches the disc name and
+platforms by path + size + mtime. `PlatformTagsPostScanTask` is an `ILibraryPostScanTask`, so it runs after every
+library scan. For each music album it reads up to three tracks for `PLATFORM` (or `CONSOLE`, `SYSTEM`) and sets the
+album's Jellyfin tags. It records the tags it added in the album's provider id `VgmLoopPlatform`, which lets it
+replace or remove them later without touching tags a user added. Albums with the Tags field locked are skipped.
+
 **API** (`Api/`).
 
 - `GET /VgmLoop/Items/{itemId}/LoopInfo` (authorized, per-user item visibility): codec, rate, channels, total
@@ -36,9 +43,11 @@ inclusive. A loop must satisfy `0 <= start < end <= total` and be at least 0.1 s
   loop. Results are cached by path + size + mtime.
 - `GET /VgmLoop/Items/{itemId}/Discs` (authorized, per-user visibility; album or track id): the album's named
   discs, `[{ discNumber, name, itemIds }]`. Names come from `DISCSUBTITLE` (Vorbis comments, MP4 freeform, ID3
-  `TXXX`), ID3 `TSST`, or a few other spellings. Tags are read with ATL, the tag library the server already loads;
-  the plugin compiles against it and doesn't ship its own copy. For each disc it reads up to three tracks and uses the
-  first name it finds. Results are cached by path + size + mtime. With "Show disc names" off, the list is empty.
+  `TXXX`), ID3 `TSST`, or a few other spellings, read through `TagService`. For each disc it reads up to three
+  tracks and uses the first name it finds. Results are cached by path + size + mtime. With "Show disc names" off, the list is empty.
+- `POST /VgmLoop/LoopStatus` (authorized), body `{ itemIds: [...] }` (up to 1000): `{ loopItemIds }`, the
+  requested tracks the caller can see that have a playable loop. Uses the same cached LoopInfo parse. Empty when "Show
+  a loop icon" is off.
 - `GET /VgmLoop/web/player.js` (anonymous; a script tag can't send auth headers).
 
 ## Client (`Web/player.js`)
@@ -81,11 +90,16 @@ only: playing any other track discards it, and a failed preload just means a nor
 **Played status.** When a loop track that has crossed the seam is stopped, the reported stop position is the loop
 end (`stopReportPosition()`), so Jellyfin counts it as played.
 
-**Disc names.** The album page renders its tracks as `<h2 class="listGroupHeader">Disc N</h2><div>…</div>` inside
-`#listChildrenCollapsible`. `installDiscNames()` watches the DOM for new headers, asks the Discs API once per album
-(keyed by the first track under a header, since the header text is localized), and appends ` · name` in a
-`span.vgmloop-discName`. jellyfin-web only shows disc headers when an album has more than one disc (or starts above
-disc 1), so a single-disc album shows no name.
+**Track list decorations.** Album and playlist pages render their tracks inside `#listChildrenCollapsible`, and
+jellyfin-web redraws that list with `innerHTML`. `installTrackListDecorations()` watches the DOM and handles new markup
+there:
+
+- Disc headers. The album list is `<h2 class="listGroupHeader">Disc N</h2><div>…</div>`. The script asks the Discs API
+  once per album, keyed by the first track under a header because the header text is localized, and appends
+  ` - name` in a `span.vgmloop-discName`. jellyfin-web only shows disc headers when an album has more than one disc (or
+  starts above disc 1), so a single-disc album shows no name.
+- Loop icon. New `.listItem[data-type="Audio"]` rows are sent to LoopStatus in one batch, and rows that loop get an
+  inline SVG (`span.vgmloop-loopIcon`) after the title. Answers are cached per track, so a redraw makes no request.
 
 The pure functions (profile filter, position/wrap math, repeat transitions, loop-end rounding) are exported in Node
 and unit tested with `node:test`; `tools/harness/` drives the real engines in a browser with mocked jellyfin-web
