@@ -181,4 +181,44 @@ internal static class Synth
         BinaryPrimitives.WriteUInt32LittleEndian(b, v);
         s.Write(b);
     }
+
+    /// <summary>
+    /// An ID3v2.4 tag with UTF-8 text frames, followed by a few silent MPEG-1 Layer III frames. A frame id of the form
+    /// <c>TXXX:NAME</c> writes a user-defined text frame with description NAME.
+    /// </summary>
+    public static byte[] Mp3WithId3Frames(params (string Id, string Text)[] frames)
+    {
+        using var body = new MemoryStream();
+        foreach (var (id, text) in frames)
+        {
+            var desc = id.StartsWith("TXXX:", StringComparison.Ordinal) ? id[5..] + "\0" : string.Empty;
+            var payload = new byte[] { 3 }.Concat(Encoding.UTF8.GetBytes(desc + text)).ToArray(); // 3 = UTF-8
+            body.Write(Encoding.ASCII.GetBytes(id[..4]));
+            body.Write(SyncSafe(payload.Length));
+            body.Write(new byte[2]); // flags
+            body.Write(payload);
+        }
+
+        using var ms = new MemoryStream();
+        ms.Write("ID3"u8);
+        ms.Write(new byte[] { 4, 0, 0 }); // v2.4.0, no flags
+        ms.Write(SyncSafe((int)body.Length));
+        body.WriteTo(ms);
+
+        // 128 kbit/s, 44.1 kHz, no padding: 417-byte frames.
+        for (var i = 0; i < 8; i++)
+        {
+            var frame = new byte[417];
+            frame[0] = 0xff;
+            frame[1] = 0xfb;
+            frame[2] = 0x90;
+            frame[3] = 0x64;
+            ms.Write(frame);
+        }
+
+        return ms.ToArray();
+    }
+
+    private static byte[] SyncSafe(int n)
+        => [(byte)((n >> 21) & 0x7f), (byte)((n >> 14) & 0x7f), (byte)((n >> 7) & 0x7f), (byte)(n & 0x7f)];
 }

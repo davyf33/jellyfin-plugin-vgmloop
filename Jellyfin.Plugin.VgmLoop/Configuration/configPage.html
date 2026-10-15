@@ -36,6 +36,15 @@
                             Marks tracks that have loop tags in album and playlist track lists. Needs the player above to be enabled.
                         </div>
                     </div>
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label class="emby-checkbox-label">
+                            <input id="EnablePlatformTags" name="EnablePlatformTags" type="checkbox" is="emby-checkbox" />
+                            <span>Tag albums with their platform</span>
+                        </label>
+                        <div class="fieldDescription checkboxFieldDescription">
+                            After each library scan, albums get a tag per platform from their files' PLATFORM tag (e.g. "Nintendo 3DS"), so you can filter music by platform under Filter &rarr; Tags. Works on its own, without the player.
+                        </div>
+                    </div>
                     <div>
                         <button is="emby-button" type="submit" class="raised button-submit block emby-button">
                             <span>Save</span>
@@ -56,6 +65,7 @@
                         document.querySelector('#EnablePlayer').checked = config.EnablePlayer;
                         document.querySelector('#EnableDiscNames').checked = config.EnableDiscNames !== false;
                         document.querySelector('#EnableLoopIcons').checked = config.EnableLoopIcons !== false;
+                        document.querySelector('#EnablePlatformTags').checked = config.EnablePlatformTags !== false;
                         Dashboard.hideLoadingMsg();
                     });
                 });
@@ -67,6 +77,7 @@
                         config.EnablePlayer = document.querySelector('#EnablePlayer').checked;
                         config.EnableDiscNames = document.querySelector('#EnableDiscNames').checked;
                         config.EnableLoopIcons = document.querySelector('#EnableLoopIcons').checked;
+                        config.EnablePlatformTags = document.querySelector('#EnablePlatformTags').checked;
                         ApiClient.updatePluginConfiguration(VgmLoopConfig.pluginUniqueId, config).then(function (result) {
                             Dashboard.processPluginConfigurationUpdateResult(result);
                         });

@@ -29,6 +29,13 @@ the last 256 KB:
 `h:mm:ss(.fff)`. Start + length wins over an end tag; an end tag equal to start + length − 1 is recognised as
 inclusive. A loop must satisfy `0 <= start < end <= total` and be at least 0.1 s long.
 
+**Tags** (`Tags/`, `Discs/`, `Platforms/`). `TagService` reads each file's tags once with ATL, the tag library the
+server already loads (the plugin compiles against it and doesn't ship its own copy), and caches the disc name and
+platforms by path + size + mtime. `PlatformTagsPostScanTask` is an `ILibraryPostScanTask`, so it runs after every
+library scan. For each music album it reads up to three tracks for `PLATFORM` (or `CONSOLE`, `SYSTEM`) and sets the
+album's Jellyfin tags. It records the tags it added in the album's provider id `VgmLoopPlatform`, which lets it
+replace or remove them later without touching tags a user added. Albums with the Tags field locked are skipped.
+
 **API** (`Api/`).
 
 - `GET /VgmLoop/Items/{itemId}/LoopInfo` (authorized, per-user item visibility): codec, rate, channels, total
@@ -36,9 +43,8 @@ inclusive. A loop must satisfy `0 <= start < end <= total` and be at least 0.1 s
   loop. Results are cached by path + size + mtime.
 - `GET /VgmLoop/Items/{itemId}/Discs` (authorized, per-user visibility; album or track id): the album's named
   discs, `[{ discNumber, name, itemIds }]`. Names come from `DISCSUBTITLE` (Vorbis comments, MP4 freeform, ID3
-  `TXXX`), ID3 `TSST`, or a few other spellings. Tags are read with ATL, the tag library the server already loads;
-  the plugin compiles against it and doesn't ship its own copy. For each disc it reads up to three tracks and uses the
-  first name it finds. Results are cached by path + size + mtime. With "Show disc names" off, the list is empty.
+  `TXXX`), ID3 `TSST`, or a few other spellings, read through `TagService`. For each disc it reads up to three
+  tracks and uses the first name it finds. Results are cached by path + size + mtime. With "Show disc names" off, the list is empty.
 - `POST /VgmLoop/LoopStatus` (authorized), body `{ itemIds: [...] }` (up to 1000): `{ loopItemIds }`, the
   requested tracks the caller can see that have a playable loop. Uses the same cached LoopInfo parse. Empty when "Show
   a loop icon" is off.

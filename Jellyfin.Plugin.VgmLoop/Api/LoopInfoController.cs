@@ -7,6 +7,7 @@ using Jellyfin.Data.Enums;
 using Jellyfin.Database.Implementations.Entities;
 using Jellyfin.Plugin.VgmLoop.Discs;
 using Jellyfin.Plugin.VgmLoop.Loop;
+using Jellyfin.Plugin.VgmLoop.Tags;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Audio;
 using MediaBrowser.Controller.Library;
@@ -33,7 +34,7 @@ public class LoopInfoController : ControllerBase
     private readonly ILibraryManager _libraryManager;
     private readonly IAuthorizationContext _authorizationContext;
     private readonly LoopInfoService _loopInfoService;
-    private readonly DiscInfoService _discInfoService;
+    private readonly TagService _tagService;
     private readonly ILogger<LoopInfoController> _logger;
 
     /// <summary>
@@ -42,19 +43,19 @@ public class LoopInfoController : ControllerBase
     /// <param name="libraryManager">Library manager.</param>
     /// <param name="authorizationContext">Authorization context.</param>
     /// <param name="loopInfoService">Loop info service.</param>
-    /// <param name="discInfoService">Disc info service.</param>
+    /// <param name="tagService">Tag reader.</param>
     /// <param name="logger">Logger.</param>
     public LoopInfoController(
         ILibraryManager libraryManager,
         IAuthorizationContext authorizationContext,
         LoopInfoService loopInfoService,
-        DiscInfoService discInfoService,
+        TagService tagService,
         ILogger<LoopInfoController> logger)
     {
         _libraryManager = libraryManager;
         _authorizationContext = authorizationContext;
         _loopInfoService = loopInfoService;
-        _discInfoService = discInfoService;
+        _tagService = tagService;
         _logger = logger;
     }
 
@@ -139,7 +140,7 @@ public class LoopInfoController : ControllerBase
             .Select(t => new DiscTrack(t.Id, t.ParentIndexNumber, t.IndexNumber, t.Path))
             .ToList();
 
-        return new JsonResult(DiscsDto.From(album.Id, _discInfoService.GetDiscs(tracks)));
+        return new JsonResult(DiscsDto.From(album.Id, _tagService.GetDiscs(tracks)));
     }
 
     /// <summary>
