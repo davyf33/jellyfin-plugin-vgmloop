@@ -23,9 +23,12 @@ Requires Jellyfin **12.2** (for 12.1, install VGM Loop 1.0). Works in the web cl
   tags: downloaded and decoded on desktop, downloaded only on iPhone/iPad (to keep memory low). Skipping elsewhere
   discards the preload. Playback speed control is disabled for loop tracks.
 
-## Disc names
+## Loop icon and disc names
 
-Albums with more than one disc show the disc name from the tags next to each header, like **Disc 2 · Arrange Album**.
+Tracks with loop tags get a small loop icon after the title in album and playlist track lists, so you can see which
+ones loop before you play them. To turn it off, uncheck **Show a loop icon on looping tracks** in the plugin settings.
+
+Albums with more than one disc show the disc name from the tags next to each header, like **Disc 2 - Arrange Album**.
 The plugin reads `DISCSUBTITLE` (FLAC, Ogg, M4A, and MP3 `TXXX`; this is what MusicBrainz Picard writes) or `TSST`
 (the ID3v2.4 "set subtitle" frame in MP3). `SETSUBTITLE`, `DISCNAME` and `DISCTITLE` also work. The plugin only reads
 the tags and doesn't modify your files. To turn it off, go to Dashboard → Plugins → VGM Loop and uncheck **Show disc
