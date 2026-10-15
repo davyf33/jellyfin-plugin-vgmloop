@@ -250,6 +250,26 @@
         return true;
     }
 
+    /** Jellyfin item ids in one form (the API and the DOM both use 32 hex digits, but be lenient). */
+    function normalizeItemId(id) {
+        return typeof id === 'string' ? id.replace(/-/g, '').toLowerCase() : '';
+    }
+
+    /**
+     * Disc names for the "Disc N" headers of an album's track list. `firstTrackIds[i]` is the id of the first track
+     * under header i; `response` is GET /VgmLoop/Items/{id}/Discs. Returns a name (or null) per header. Headers are
+     * matched by track id rather than by their text, which is localized ("Disc 2", "Disque 2", ...).
+     */
+    function discNamesForHeaders(firstTrackIds, response) {
+        const byTrack = new Map();
+        const discs = response && Array.isArray(response.discs) ? response.discs : [];
+        for (const disc of discs) {
+            if (!disc || typeof disc.name !== 'string' || !disc.name || !Array.isArray(disc.itemIds)) continue;
+            for (const id of disc.itemIds) byTrack.set(normalizeItemId(id), disc.name);
+        }
+        return (firstTrackIds || []).map((id) => byTrack.get(normalizeItemId(id)) || null);
+    }
+
     const core = {
         adaptDeviceProfile,
         normalizationGainDb,
@@ -269,7 +289,9 @@
         installNextTrackOverride,
         installStickyRepeat,
         isMusicQueue,
-        nextQueueItem
+        nextQueueItem,
+        normalizeItemId,
+        discNamesForHeaders
     };
 
     if (typeof module === 'object' && module.exports) {
@@ -319,7 +341,7 @@
     }
 
     /**
-     * Plain <audio> playback. Port of htmlAudioPlayer (jellyfin-web v12.1) without hls.js.
+     * Plain <audio> playback. Port of htmlAudioPlayer (jellyfin-web v12.1, unchanged in v12.2) without hls.js.
      * All events are raised on the owning player.
      */
     class PlainEngine {
@@ -1142,6 +1164,87 @@
         return readSetting(SETTINGS.disabled) === '1';
     }
 
+    /**
+     * Album pages: appends the tagged disc name to each "Disc N" header ("Disc 2 · Arrange Album"). jellyfin-web
+     * renders the track list as <h2 class="listGroupHeader">Disc N</h2><div>tracks...</div> inside
+     * #listChildrenCollapsible, and re-renders it with innerHTML, so a MutationObserver picks up new headers.
+     */
+    function installDiscNames(deps) {
+        if (!root.MutationObserver || !root.document || !root.document.body) return;
+        const LISTS = '#listChildrenCollapsible';
+        const HEADERS = 'h2.listGroupHeader:not([data-vgmloop-disc])';
+        const MAX_CACHED = 2000;
+        const byTrack = new Map(); // track id -> Promise<Discs response | null>
+        let scheduled = false;
+
+        function firstTrack(header) {
+            const group = header.nextElementSibling;
+            const track = group && group.querySelector('.listItem[data-id]');
+            return track && track.getAttribute('data-type') === 'Audio' ? track : null;
+        }
+
+        function getDiscs(track) {
+            const trackId = normalizeItemId(track.getAttribute('data-id'));
+            let p = byTrack.get(trackId);
+            if (!p) {
+                const serverId = track.getAttribute('data-serverid');
+                const apiClient = serverId ? deps.ServerConnections.getApiClient(serverId) : deps.ServerConnections.currentApiClient();
+                if (!apiClient) return Promise.resolve(null);
+                if (byTrack.size > MAX_CACHED) byTrack.clear();
+                p = withTimeout(apiClient.getJSON(apiClient.getUrl('VgmLoop/Items/' + trackId + '/Discs')), 5000, 'Discs')
+                    .then((r) => {
+                        // Every track of the album shares this answer, so other headers (and re-renders) skip the request.
+                        for (const d of (r && r.discs) || []) for (const id of d.itemIds || []) byTrack.set(normalizeItemId(id), p);
+                        return r;
+                    })
+                    .catch((e) => {
+                        console.debug(TAG, 'disc names unavailable:', e && e.message);
+                        return null;
+                    });
+                byTrack.set(trackId, p);
+            }
+            return p;
+        }
+
+        function label(header, name) {
+            if (!header.isConnected || header.querySelector('.vgmloop-discName')) return;
+            const span = root.document.createElement('span');
+            span.className = 'vgmloop-discName';
+            span.style.opacity = '0.75';
+            span.textContent = ' \u00b7 ' + name;
+            header.appendChild(span);
+        }
+
+        function scan() {
+            scheduled = false;
+            // jellyfin-web keeps earlier pages in the DOM, so there can be several album lists; one request each.
+            for (const list of root.document.querySelectorAll(LISTS)) {
+                const headers = Array.from(list.querySelectorAll(HEADERS));
+                if (!headers.length) continue;
+                const tracks = headers.map((h) => {
+                    h.setAttribute('data-vgmloop-disc', '1');
+                    return firstTrack(h);
+                });
+                const first = tracks.find((t) => t);
+                if (!first) continue;
+                const ids = tracks.map((t) => (t ? t.getAttribute('data-id') : null));
+                getDiscs(first).then((r) => {
+                    if (!r) return;
+                    discNamesForHeaders(ids, r).forEach((name, i) => {
+                        if (name) label(headers[i], name);
+                    });
+                });
+            }
+        }
+
+        new root.MutationObserver(() => {
+            if (scheduled) return;
+            scheduled = true;
+            setTimeout(scan, 0);
+        }).observe(root.document.body, { childList: true, subtree: true });
+        scan();
+    }
+
     class VgmLoopPlayer {
         constructor(deps) {
             this.name = 'VGM Loop Player';
@@ -1167,6 +1270,11 @@
                 }, () => {
                     if (this._engine === this._loop) this._loop.onRepeatModeChange();
                 });
+                try {
+                    installDiscNames(deps);
+                } catch (e) {
+                    console.warn(TAG, 'disc names not installed:', e);
+                }
             }
             deps.events.on(this, 'repeatmodechange', () => {
                 if (this._engine === this._loop) this._loop.onRepeatModeChange();

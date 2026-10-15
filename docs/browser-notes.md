@@ -1,6 +1,6 @@
 # Jellyfin and browser notes
 
-Findings that shaped the implementation (Jellyfin 12.1.0, jellyfin-web 12.1).
+Findings that shaped the implementation (Jellyfin 12.1.0, jellyfin-web 12.1; rechecked against 12.2.0, where the audio player, play queue and index.html are unchanged).
 
 ## Jellyfin
 
