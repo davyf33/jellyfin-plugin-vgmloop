@@ -1,9 +1,10 @@
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Globalization;
 using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
 using Jellyfin.Plugin.VgmLoop.Discs;
+using Jellyfin.Plugin.VgmLoop.Loop;
 using Jellyfin.Plugin.VgmLoop.Platforms;
 using Microsoft.Extensions.Logging;
 
@@ -21,32 +22,51 @@ public sealed record FileTags(string? DiscName, IReadOnlyList<string> Platforms)
 }
 
 /// <summary>
-/// Reads disc names and platforms from audio tags with ATL (the tag library Jellyfin itself uses, so FLAC, Ogg, MP3,
-/// M4A and the rest are covered), caching by path + size + mtime.
+/// Reads disc names and platforms from audio tags. FLAC and Ogg come from the loop header parse (one cached read
+/// serves the loop icon, disc names and platforms); other formats are read with ATL, the tag library Jellyfin itself
+/// uses, so MP3, M4A and the rest are covered. Cached by path + size + mtime.
 /// </summary>
 public class TagService
 {
-    private const int MaxEntries = 8192;
+    /// <summary>Files read at once when an album's discs are looked up (network shares are slow per file, not per byte).</summary>
+    public const int ReadParallelism = 8;
 
-    private readonly ConcurrentDictionary<string, FileTags> _cache = new(StringComparer.Ordinal);
+    private const int MaxEntries = 50_000;
+
+    private static readonly string[] HeaderParsedExtensions = [".flac", ".ogg", ".oga", ".opus"];
+
+    private readonly FileCache<FileTags> _cache = new(MaxEntries);
+    private readonly LoopInfoService _loopInfoService;
     private readonly ILogger<TagService> _logger;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="TagService"/> class.
     /// </summary>
+    /// <param name="loopInfoService">Loop header reader (FLAC and Ogg tags come from it).</param>
     /// <param name="logger">Logger.</param>
-    public TagService(ILogger<TagService> logger)
+    public TagService(LoopInfoService loopInfoService, ILogger<TagService> logger)
     {
+        _loopInfoService = loopInfoService;
         _logger = logger;
     }
 
     /// <summary>
-    /// Gets the named discs of an album.
+    /// Gets the named discs of an album. The first track of every disc is read in parallel up front, since that is
+    /// normally the only one needed.
     /// </summary>
     /// <param name="tracks">The album's tracks.</param>
     /// <returns>Named discs, by disc number.</returns>
     public IReadOnlyList<DiscName> GetDiscs(IEnumerable<DiscTrack> tracks)
-        => DiscNames.Build(tracks, t => GetDiscName(t.Path));
+    {
+        var list = tracks.ToList();
+        var firstPerDisc = list
+            .Where(t => t.DiscNumber is not null)
+            .GroupBy(t => t.DiscNumber)
+            .Select(g => g.OrderBy(t => t.TrackNumber ?? int.MaxValue).ThenBy(t => t.Path, StringComparer.Ordinal).First())
+            .ToList();
+        Parallel.ForEach(firstPerDisc, new ParallelOptions { MaxDegreeOfParallelism = ReadParallelism }, t => Get(t.Path));
+        return DiscNames.Build(list, t => GetDiscName(t.Path));
+    }
 
     /// <summary>
     /// Gets the disc name tagged in one file.
@@ -69,45 +89,40 @@ public class TagService
     /// <returns>The tags; <see cref="FileTags.Empty"/> when the file can't be read.</returns>
     public FileTags Get(string path)
     {
-        FileInfo file;
         try
         {
-            file = new FileInfo(path);
-            if (!file.Exists)
+            if (HeaderParsedExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase))
             {
-                return FileTags.Empty;
+                var info = _loopInfoService.Get(path);
+                if (info.Header.Codec != "unknown")
+                {
+                    return info.Tags;
+                }
             }
+
+            var file = new FileInfo(path);
+            return file.Exists ? _cache.GetOrRead(file, (f, _) => ReadWithAtl(f.FullName)) : FileTags.Empty;
         }
         catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException or NotSupportedException)
         {
+            _logger.LogDebug(ex, "VGM Loop: could not read {Path}", path);
             return FileTags.Empty;
         }
+    }
 
-        var key = string.Create(CultureInfo.InvariantCulture, $"{path}|{file.Length}-{file.LastWriteTimeUtc.Ticks}");
-        if (_cache.TryGetValue(key, out var cached))
-        {
-            return cached;
-        }
-
-        var tags = FileTags.Empty;
+    private FileTags ReadWithAtl(string path)
+    {
         try
         {
             var fields = new ATL.Track(path).AdditionalFields;
-            tags = new FileTags(DiscNames.FromFields(fields), PlatformTags.FromFields(fields));
+            return new FileTags(DiscNames.FromFields(fields), PlatformTags.FromFields(fields));
         }
 #pragma warning disable CA1031 // A tag we can't read just means no value; never fail the caller over it.
         catch (Exception ex)
 #pragma warning restore CA1031
         {
             _logger.LogDebug(ex, "VGM Loop: could not read tags of {Path}", path);
+            return FileTags.Empty;
         }
-
-        if (_cache.Count >= MaxEntries)
-        {
-            _cache.Clear();
-        }
-
-        _cache[key] = tags;
-        return tags;
     }
 }

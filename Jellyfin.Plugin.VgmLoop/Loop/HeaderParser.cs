@@ -14,8 +14,11 @@ namespace Jellyfin.Plugin.VgmLoop.Loop;
 /// </summary>
 public static class HeaderParser
 {
-    /// <summary>How far back from EOF to look for the last Ogg page.</summary>
+    /// <summary>How far back from EOF to look for the last Ogg page at most.</summary>
     public const int TailScanBytes = 256 * 1024;
+
+    /// <summary>How far back from EOF to look first (one maximum-size Ogg page fits).</summary>
+    public const int QuickTailScanBytes = 64 * 1024;
 
     /// <summary>Largest FLAC metadata block or Ogg header packet we are willing to buffer (large cover art).</summary>
     public const int MaxMetadataBytes = 32 * 1024 * 1024;
@@ -327,7 +330,23 @@ public static class HeaderParser
 
     private static long? FindLastGranule(Stream stream, uint serial)
     {
-        var start = Math.Max(0, stream.Length - TailScanBytes);
+        // An Ogg page is at most 65,307 bytes, so the last page normally starts within the last 64 KB. Only when it
+        // isn't there (trailing junk, or the last page belongs to another stream) is the wider window read.
+        foreach (var window in (ReadOnlySpan<int>)[QuickTailScanBytes, TailScanBytes])
+        {
+            var granule = FindLastGranule(stream, serial, window);
+            if (granule is not null || stream.Length <= window)
+            {
+                return granule;
+            }
+        }
+
+        return null;
+    }
+
+    private static long? FindLastGranule(Stream stream, uint serial, int window)
+    {
+        var start = Math.Max(0, stream.Length - window);
         var tail = new byte[stream.Length - start];
         if (!TryReadAt(stream, start, tail))
         {

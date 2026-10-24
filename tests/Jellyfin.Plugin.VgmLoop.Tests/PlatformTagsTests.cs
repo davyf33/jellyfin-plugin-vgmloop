@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using Jellyfin.Plugin.VgmLoop.Loop;
 using Jellyfin.Plugin.VgmLoop.Platforms;
 using Jellyfin.Plugin.VgmLoop.Tags;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -86,7 +87,7 @@ public class PlatformTagsTests
         var mp3 = DiscNamesTests.WriteTemp(".mp3", Synth.Mp3WithId3Frames(("TIT2", "Field"), ("TXXX:PLATFORM", "Wii")));
         try
         {
-            var service = new TagService(NullLogger<TagService>.Instance);
+            var service = new TagService(new LoopInfoService(NullLogger<LoopInfoService>.Instance), NullLogger<TagService>.Instance);
             Assert.Equal(new FileTags("OST", ["Nintendo 3DS"]), service.Get(flac), new FileTagsComparer());
             Assert.Equal(["Wii"], service.GetPlatforms(mp3));
         }

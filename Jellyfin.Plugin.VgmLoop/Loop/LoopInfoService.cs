@@ -1,7 +1,8 @@
 using System;
-using System.Collections.Concurrent;
-using System.Globalization;
 using System.IO;
+using Jellyfin.Plugin.VgmLoop.Discs;
+using Jellyfin.Plugin.VgmLoop.Platforms;
+using Jellyfin.Plugin.VgmLoop.Tags;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.VgmLoop.Loop;
@@ -13,7 +14,8 @@ namespace Jellyfin.Plugin.VgmLoop.Loop;
 /// <param name="Loop">Resolved loop points.</param>
 /// <param name="FileSize">File size in bytes.</param>
 /// <param name="Version">Cache version string (<c>size-mtimeTicks</c>).</param>
-public sealed record FileLoopInfo(AudioHeader Header, LoopResolution Loop, long FileSize, string Version);
+/// <param name="Tags">Disc name and platforms from the same Vorbis comments, so FLAC and Ogg need no second read.</param>
+public sealed record FileLoopInfo(AudioHeader Header, LoopResolution Loop, long FileSize, string Version, FileTags Tags);
 
 /// <summary>
 /// Reads and caches loop metadata, keyed by path + size + mtime.
@@ -23,9 +25,10 @@ public class LoopInfoService
     /// <summary>Codecs the client's loop engine can decode.</summary>
     public static readonly string[] LoopableCodecs = ["flac", "vorbis", "opus"];
 
-    private const int MaxEntries = 4096;
+    // Entries are small (the full Vorbis comments are dropped once resolved), so a large library fits.
+    private const int MaxEntries = 50_000;
 
-    private readonly ConcurrentDictionary<string, FileLoopInfo> _cache = new(StringComparer.Ordinal);
+    private readonly FileCache<FileLoopInfo> _cache = new(MaxEntries);
     private readonly ILogger<LoopInfoService> _logger;
 
     /// <summary>
@@ -51,21 +54,7 @@ public class LoopInfoService
             throw new FileNotFoundException("Audio file not found.", path);
         }
 
-        var version = string.Create(CultureInfo.InvariantCulture, $"{file.Length}-{file.LastWriteTimeUtc.Ticks}");
-        var key = path + "|" + version;
-        if (_cache.TryGetValue(key, out var cached))
-        {
-            return cached;
-        }
-
-        var info = Read(file, version);
-        if (_cache.Count >= MaxEntries)
-        {
-            _cache.Clear();
-        }
-
-        _cache[key] = info;
-        return info;
+        return _cache.GetOrRead(file, Read);
     }
 
     /// <summary>
@@ -103,6 +92,7 @@ public class LoopInfoService
         using var stream = new FileStream(file.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, bufferSize: 64 * 1024, FileOptions.RandomAccess);
         var header = HeaderParser.Parse(stream);
         var loop = ResolveHeader(header);
+        var tags = new FileTags(DiscNames.FromFields(header.Tags), PlatformTags.FromFields(header.Tags));
         _logger.LogDebug(
             "VGM Loop: {Path}: {Codec} {Rate} Hz total={Total} loop={HasLoop} {Start}..{End} ({Reason})",
             file.FullName,
@@ -113,6 +103,6 @@ public class LoopInfoService
             loop.LoopStart,
             loop.LoopEnd,
             loop.Reason ?? loop.Convention);
-        return new FileLoopInfo(header, loop, file.Length, version);
+        return new FileLoopInfo(header.WithoutTags(), loop, file.Length, version, tags);
     }
 }
