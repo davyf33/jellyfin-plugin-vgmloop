@@ -5,3 +5,4 @@ obj/
 *.user
 .DS_Store
 artifacts/
+__pycache__/

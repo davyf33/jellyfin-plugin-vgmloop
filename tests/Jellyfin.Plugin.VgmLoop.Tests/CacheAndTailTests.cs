@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.VgmLoop.Loop;
+using Jellyfin.Plugin.VgmLoop.Tags;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -80,7 +81,7 @@ public class CacheAndTailTests
             var info = new LoopInfoService(NullLogger<LoopInfoService>.Instance).Get(path);
             Assert.True(info.Loop.HasLoop, info.Loop.Reason);
             Assert.Equal("Channels", info.Tags.DiscName);
-            Assert.Equal(["Wii"], info.Tags.Platforms);
+            Assert.Equal(["Wii"], info.Tags.Values(AlbumTagFields.Platform));
             Assert.Empty(info.Header.Tags);
             Assert.Equal(2, info.Loop.RawTags.Count);
         }

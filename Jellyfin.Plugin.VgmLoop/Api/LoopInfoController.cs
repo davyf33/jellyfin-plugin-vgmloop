@@ -94,7 +94,7 @@ public class LoopInfoController : ControllerBase
             return NotFound();
         }
 
-        return new JsonResult(LoopInfoDto.From(item.Id, info));
+        return new JsonResult(LoopInfoDto.From(item.Id, info, Plugin.Instance?.Configuration));
     }
 
     /// <summary>
@@ -174,13 +174,16 @@ public class LoopInfoController : ControllerBase
             return new JsonResult(new LoopStatusDto { LoopItemIds = looping });
         }
 
-        // One query for the whole batch (it applies the user's library access), then the files in parallel: on a
-        // network share each file costs a round trip or two, so reading them one by one is what makes this slow.
+        // One query for the whole batch, then the files in parallel: on a network share each file costs a round trip
+        // or two, so reading them one by one is what makes this slow. The query alone doesn't enforce library access
+        // (a user with no libraries enabled gets no library filter at all), so every track also goes through
+        // IsVisibleStandalone, the check GetItemById(id, user) uses.
         var query = auth.User is not null ? new InternalItemsQuery(auth.User) : new InternalItemsQuery();
         query.ItemIds = ids;
         query.IncludeItemTypes = [BaseItemKind.Audio];
+        var user = auth.User;
         var tracks = _libraryManager.GetItemList(query)
-            .Where(t => t is AudioItem && !string.IsNullOrEmpty(t.Path))
+            .Where(t => t is AudioItem && !string.IsNullOrEmpty(t.Path) && (user is null || t.IsVisibleStandalone(user)))
             .ToList();
 
         var loops = new ConcurrentDictionary<Guid, bool>();
@@ -210,6 +213,12 @@ public class LoopInfoController : ControllerBase
     private async Task<(BaseItem? Item, User? User)> GetVisibleItem(Guid itemId)
     {
         var auth = await _authorizationContext.GetAuthorizationInfo(HttpContext).ConfigureAwait(false);
+        if (itemId == Guid.Empty)
+        {
+            // GetItemById throws on an empty id; it is simply not an item.
+            return (null, auth.User);
+        }
+
         BaseItem? item = auth.User is not null
             ? _libraryManager.GetItemById<BaseItem>(itemId, auth.User)
             : auth.IsApiKey ? _libraryManager.GetItemById(itemId) : null;

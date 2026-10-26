@@ -20,6 +20,21 @@
                     </div>
                     <div class="checkboxContainer checkboxContainer-withDescription">
                         <label class="emby-checkbox-label">
+                            <input id="EnablePlaythrough" name="EnablePlaythrough" type="checkbox" is="emby-checkbox" />
+                            <span>Play cut rips through with a fade</span>
+                        </label>
+                        <div class="fieldDescription checkboxFieldDescription">
+                            For loop tracks that stop right at the loop end: with Repeat off or Repeat all, play the loop a few times, then fade out and move on. With Repeat One they loop forever as usual. Needs the player above to be enabled.
+                        </div>
+                    </div>
+                    <div class="inputContainer">
+                        <input id="PlaythroughLoops" name="PlaythroughLoops" type="number" is="emby-input" min="1" max="5" step="1" label="Play the loop this many times before fading (1-5)" />
+                    </div>
+                    <div class="inputContainer">
+                        <input id="PlaythroughFadeSeconds" name="PlaythroughFadeSeconds" type="number" is="emby-input" min="0" max="30" step="0.5" label="Fade length in seconds (0-30)" />
+                    </div>
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label class="emby-checkbox-label">
                             <input id="EnableDiscNames" name="EnableDiscNames" type="checkbox" is="emby-checkbox" />
                             <span>Show disc names on album pages</span>
                         </label>
@@ -45,6 +60,24 @@
                             After each library scan, albums get a tag per platform from their files' PLATFORM tag (e.g. "Nintendo 3DS"), so you can filter music by platform under Filter &rarr; Tags. Works on its own, without the player.
                         </div>
                     </div>
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label class="emby-checkbox-label">
+                            <input id="EnableCategoryTags" name="EnableCategoryTags" type="checkbox" is="emby-checkbox" />
+                            <span>Tag albums with their release category</span>
+                        </label>
+                        <div class="fieldDescription checkboxFieldDescription">
+                            From the RELEASECATEGORY tag, e.g. "Official Soundtrack" or "Game Rip".
+                        </div>
+                    </div>
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label class="emby-checkbox-label">
+                            <input id="EnableSeriesTags" name="EnableSeriesTags" type="checkbox" is="emby-checkbox" />
+                            <span>Tag albums with their series</span>
+                        </label>
+                        <div class="fieldDescription checkboxFieldDescription">
+                            From the SERIES (or FRANCHISE) tag, e.g. "Animal Crossing". Turning a tag option off stops updating those tags but doesn't remove the ones already there.
+                        </div>
+                    </div>
                     <div>
                         <button is="emby-button" type="submit" class="raised button-submit block emby-button">
                             <span>Save</span>
@@ -63,9 +96,14 @@
                     Dashboard.showLoadingMsg();
                     ApiClient.getPluginConfiguration(VgmLoopConfig.pluginUniqueId).then(function (config) {
                         document.querySelector('#EnablePlayer').checked = config.EnablePlayer;
+                        document.querySelector('#EnablePlaythrough').checked = config.EnablePlaythrough !== false;
+                        document.querySelector('#PlaythroughLoops').value = config.PlaythroughLoops || 2;
+                        document.querySelector('#PlaythroughFadeSeconds').value = config.PlaythroughFadeSeconds != null ? config.PlaythroughFadeSeconds : 10;
                         document.querySelector('#EnableDiscNames').checked = config.EnableDiscNames !== false;
                         document.querySelector('#EnableLoopIcons').checked = config.EnableLoopIcons !== false;
                         document.querySelector('#EnablePlatformTags').checked = config.EnablePlatformTags !== false;
+                        document.querySelector('#EnableCategoryTags').checked = config.EnableCategoryTags !== false;
+                        document.querySelector('#EnableSeriesTags').checked = config.EnableSeriesTags !== false;
                         Dashboard.hideLoadingMsg();
                     });
                 });
@@ -75,9 +113,15 @@
                     Dashboard.showLoadingMsg();
                     ApiClient.getPluginConfiguration(VgmLoopConfig.pluginUniqueId).then(function (config) {
                         config.EnablePlayer = document.querySelector('#EnablePlayer').checked;
+                        config.EnablePlaythrough = document.querySelector('#EnablePlaythrough').checked;
+                        config.PlaythroughLoops = Math.min(5, Math.max(1, parseInt(document.querySelector('#PlaythroughLoops').value, 10) || 2));
+                        var fade = parseFloat(document.querySelector('#PlaythroughFadeSeconds').value);
+                        config.PlaythroughFadeSeconds = Math.min(30, Math.max(0, isNaN(fade) ? 10 : fade));
                         config.EnableDiscNames = document.querySelector('#EnableDiscNames').checked;
                         config.EnableLoopIcons = document.querySelector('#EnableLoopIcons').checked;
                         config.EnablePlatformTags = document.querySelector('#EnablePlatformTags').checked;
+                        config.EnableCategoryTags = document.querySelector('#EnableCategoryTags').checked;
+                        config.EnableSeriesTags = document.querySelector('#EnableSeriesTags').checked;
                         ApiClient.updatePluginConfiguration(VgmLoopConfig.pluginUniqueId, config).then(function (result) {
                             Dashboard.processPluginConfigurationUpdateResult(result);
                         });

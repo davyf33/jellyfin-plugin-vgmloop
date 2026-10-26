@@ -32,13 +32,19 @@ inclusive. A loop must satisfy `0 <= start < end <= total` and be at least 0.1 s
 Parsed results are cached by path + size + mtime (`FileCache`, 50,000 files; the full Vorbis comments are dropped
 once used, so entries stay small). Concurrent requests for one file share a single read.
 
-**Tags** (`Tags/`, `Discs/`, `Platforms/`). `TagService` gives the disc name and platforms of a file. For FLAC and
-Ogg they come from the loop header parse above, so one cached read covers the loop icon, disc names and platforms.
-Other formats (MP3, M4A, ...) are read with ATL, the tag library the server already loads (the plugin compiles
-against it and doesn't ship its own copy). `PlatformTagsPostScanTask` is an `ILibraryPostScanTask`, so it runs after every
-library scan. For each music album it reads up to three tracks for `PLATFORM` (or `CONSOLE`, `SYSTEM`) and sets the
-album's Jellyfin tags. It records the tags it added in the album's provider id `VgmLoopPlatform`, which lets it
-replace or remove them later without touching tags a user added. Albums with the Tags field locked are skipped.
+**Tags** (`Tags/`, `Discs/`). `TagService` gives a file's disc name and album tag fields. For FLAC and Ogg they come
+from the loop header parse above, so one cached read covers the loop icon, disc names and album tags. Other formats
+(MP3, M4A, ...) are read with ATL, the tag library the server already loads (the plugin compiles against it and
+doesn't ship its own copy).
+
+`AlbumTagFields` lists the file tags that become Jellyfin tags on albums. Each entry has its keys, a provider id and
+a setting: `PLATFORM`/`CONSOLE`/`SYSTEM` (`VgmLoopPlatform`), `RELEASECATEGORY` (`VgmLoopCategory`) and
+`SERIES`/`FRANCHISE` (`VgmLoopSeries`). `AlbumTagsPostScanTask` is an `ILibraryPostScanTask`, so it runs after every
+library scan. For each music album it reads up to three tracks and takes each field from the first track that has it
+(values split on U+001F, `;` and `|`, at most 5). `AlbumTagMapper.Plan` then works out the new tags. Each field
+records the tags it added in its own provider id. A field only removes tags it recorded, and only when no other
+field still wants them. A value the user already had as a tag isn't recorded, so it is never removed. A disabled
+field's tags and record are left as they are. Albums with the Tags field locked are skipped.
 
 **API** (`Api/`).
 
@@ -52,9 +58,18 @@ replace or remove them later without touching tags a user added. Albums with the
   disc names" off, the list is empty.
 - `POST /VgmLoop/LoopStatus` (authorized), body `{ itemIds: [...] }` (up to 500): `{ loopItemIds }`, the
   requested tracks the caller can see that have a playable loop. The tracks are looked up in one query and the files
-  read 8 at a time, since on a network share each file costs a round trip or two. Uses the same cached LoopInfo parse.
+  read 8 at a time, since on a network share each file costs a round trip or two. That query doesn't enforce library
+  access on its own (a user with no libraries enabled gets no library filter at all), so each track also goes through
+  `IsVisibleStandalone`, the check `GetItemById(id, user)` uses. Uses the same cached LoopInfo parse.
   Empty when "Show a loop icon" is off.
 - `GET /VgmLoop/web/player.js` (anonymous; a script tag can't send auth headers).
+- The empty id (all zeros) is 404 for LoopInfo and Discs (Jellyfin's `GetItemById` throws on it).
+
+`tools/e2e/` checks all of this against a real server: `run.sh` starts a fresh Jellyfin with the plugin and a
+generated 961-file library, and `e2e.py` covers the injection, the API, album tags across rescans (retagging files with
+ffmpeg), a user without library access and cold-cache timings. With `LIVE=1`, `live.mjs` then runs player.js in
+Chromium against the same server: play-through on a real cut rip, the Opus seam, plain playback, and disc names and
+loop icons on the 950-track album.
 
 ## Client (`Web/player.js`)
 
@@ -73,6 +88,23 @@ every music track (`item.Type === 'Audio'`) so the player never changes mid-queu
 **Repeat integration.** Looping follows jellyfin-web's repeat button: Repeat One loops forever; Repeat off / all plays
 the file once. Changing the mode mid-track re-anchors the position model without restarting (leaving Repeat One lets
 the track play out; entering it starts looping unless the playhead is already past the loop end).
+**Play-through.** A cut rip is a loop track with less than 2 s of audio after `loopEnd` (`isCutRip`). Outside Repeat
+One it plays on a longer timeline instead of stopping dead: intro, N passes of the loop, then F seconds of fading while
+still looping (`playthroughTimeline`; N and F come from the plugin settings via LoopInfo's `playthroughLoops` and
+`playthroughFadeSeconds`, which are absent when it is off; `?vgmloop=playthrough-off` turns it off per browser). The
+source keeps looping. A timeline position maps back to the file with the loop-wrap formula (`timelineToFile`), and the
+anchor carries the timeline position `v0` next to the file position. The fade is a dB-linear
+`exponentialRampToValueAtTime` on the GainNode down to -60 dB relative to the current volume. `_applyGain` schedules it
+from the current timeline position, so volume changes, mute, seeks and pauses stay in step. The 250 ms timer ends the
+track once the timeline passes its end, which counts as a natural end (the queue advances). Because jellyfin-web sizes
+the seek bar from the media source's `RunTimeTicks`, the engine sets that to the play-through length while it runs and
+puts the original back whenever the track ends, stops or is replaced. A stop reports the timeline fraction of the
+file (`playthroughReportPosition`), so the track counts as played near the end of the fade, and fully when the fade
+ends. Repeat One during play-through (even mid-fade) cancels it, ramps back up over 0.5 s and loops as usual.
+Leaving Repeat One mid-track on a cut rip starts play-through with the current position as the timeline position, so
+the pass in progress counts as the first. `tools/harness/playthrough.html` drives all of this with two generated
+tones.
+
 In Repeat One, jellyfin-web's Next would replay the current track; `installNextTrackOverride()` wraps
 `playbackManager.nextTrack` so a user-initiated Next moves to the next queue item (wrapping like Repeat All) while
 Repeat One stays selected. A natural end marks the following `nextTrack()` as an automatic advance, which keeps the
