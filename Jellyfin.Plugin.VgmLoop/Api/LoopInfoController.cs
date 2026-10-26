@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -28,8 +29,8 @@ namespace Jellyfin.Plugin.VgmLoop.Api;
 [Route("VgmLoop")]
 public class LoopInfoController : ControllerBase
 {
-    /// <summary>Most ids one <c>LoopStatus</c> request checks.</summary>
-    public const int MaxLoopStatusItems = 1000;
+    /// <summary>Most ids one <c>LoopStatus</c> request checks (player.js sends batches of 100).</summary>
+    public const int MaxLoopStatusItems = 500;
 
     private readonly ILibraryManager _libraryManager;
     private readonly IAuthorizationContext _authorizationContext;
@@ -166,30 +167,39 @@ public class LoopInfoController : ControllerBase
             .Take(MaxLoopStatusItems)
             .Select(s => Guid.TryParse(s, out var g) ? g : Guid.Empty)
             .Where(g => g != Guid.Empty)
-            .Distinct();
-        foreach (var id in ids)
+            .Distinct()
+            .ToArray();
+        if (ids.Length == 0 || (auth.User is null && !auth.IsApiKey))
         {
-            BaseItem? item = auth.User is not null
-                ? _libraryManager.GetItemById<BaseItem>(id, auth.User)
-                : auth.IsApiKey ? _libraryManager.GetItemById(id) : null;
-            if (item is not AudioItem || string.IsNullOrEmpty(item.Path))
-            {
-                continue;
-            }
+            return new JsonResult(new LoopStatusDto { LoopItemIds = looping });
+        }
 
+        // One query for the whole batch (it applies the user's library access), then the files in parallel: on a
+        // network share each file costs a round trip or two, so reading them one by one is what makes this slow.
+        var query = auth.User is not null ? new InternalItemsQuery(auth.User) : new InternalItemsQuery();
+        query.ItemIds = ids;
+        query.IncludeItemTypes = [BaseItemKind.Audio];
+        var tracks = _libraryManager.GetItemList(query)
+            .Where(t => t is AudioItem && !string.IsNullOrEmpty(t.Path))
+            .ToList();
+
+        var loops = new ConcurrentDictionary<Guid, bool>();
+        Parallel.ForEach(tracks, new ParallelOptions { MaxDegreeOfParallelism = TagService.ReadParallelism }, track =>
+        {
             try
             {
-                if (_loopInfoService.Get(item.Path).Loop.HasLoop)
+                if (_loopInfoService.Get(track.Path).Loop.HasLoop)
                 {
-                    looping.Add(item.Id.ToString("N"));
+                    loops[track.Id] = true;
                 }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                _logger.LogDebug(ex, "VGM Loop: could not read {Path}", item.Path);
+                _logger.LogDebug(ex, "VGM Loop: could not read {Path}", track.Path);
             }
-        }
+        });
 
+        looping.AddRange(ids.Where(loops.ContainsKey).Select(id => id.ToString("N")));
         return new JsonResult(new LoopStatusDto { LoopItemIds = looping });
     }
 

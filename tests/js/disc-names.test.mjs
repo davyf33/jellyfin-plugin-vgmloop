@@ -47,3 +47,26 @@ test('loopingIds normalizes ids and tolerates bad responses', () => {
     assert.equal(loopingIds(null).size, 0);
     assert.equal(loopingIds({ loopItemIds: 'nope' }).size, 0);
 });
+
+const { chunk, runLimited } = require('../../Jellyfin.Plugin.VgmLoop/Web/player.js');
+
+test('chunk keeps order and sizes', () => {
+    assert.deepEqual(chunk([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]]);
+    assert.deepEqual(chunk([], 100), []);
+});
+
+test('runLimited starts jobs in order, caps concurrency, survives failures', async () => {
+    let running = 0;
+    let peak = 0;
+    const started = [];
+    await runLimited([1, 2, 3, 4, 5, 6, 7], 3, async (n) => {
+        started.push(n);
+        running++;
+        peak = Math.max(peak, running);
+        await new Promise((r) => setTimeout(r, 5));
+        running--;
+        if (n === 2) throw new Error('boom');
+    });
+    assert.deepEqual(started, [1, 2, 3, 4, 5, 6, 7]);
+    assert.equal(peak, 3);
+});

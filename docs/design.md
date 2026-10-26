@@ -15,8 +15,8 @@ modified.
 Any failure (missing file, bad JSON, no `</head>`) logs a warning and passes the request through untouched. The
 plugin setting "Enable VGM Loop player" turns the rewriting off.
 
-**Loop metadata** (`Loop/`). A self-contained header parser reads only what it needs from the start of the file plus
-the last 256 KB:
+**Loop metadata** (`Loop/`). A self-contained header parser reads only what it needs from the start of the file plus,
+for Ogg, the last 64 KB (256 KB if the last page isn't in there):
 
 - skips a leading ID3v2 tag and records its length as `audioDataOffset`;
 - FLAC: STREAMINFO (rate, channels, bits, total samples) and VORBIS_COMMENT;
@@ -29,9 +29,13 @@ the last 256 KB:
 `h:mm:ss(.fff)`. Start + length wins over an end tag; an end tag equal to start + length − 1 is recognised as
 inclusive. A loop must satisfy `0 <= start < end <= total` and be at least 0.1 s long.
 
-**Tags** (`Tags/`, `Discs/`, `Platforms/`). `TagService` reads each file's tags once with ATL, the tag library the
-server already loads (the plugin compiles against it and doesn't ship its own copy), and caches the disc name and
-platforms by path + size + mtime. `PlatformTagsPostScanTask` is an `ILibraryPostScanTask`, so it runs after every
+Parsed results are cached by path + size + mtime (`FileCache`, 50,000 files; the full Vorbis comments are dropped
+once used, so entries stay small). Concurrent requests for one file share a single read.
+
+**Tags** (`Tags/`, `Discs/`, `Platforms/`). `TagService` gives the disc name and platforms of a file. For FLAC and
+Ogg they come from the loop header parse above, so one cached read covers the loop icon, disc names and platforms.
+Other formats (MP3, M4A, ...) are read with ATL, the tag library the server already loads (the plugin compiles
+against it and doesn't ship its own copy). `PlatformTagsPostScanTask` is an `ILibraryPostScanTask`, so it runs after every
 library scan. For each music album it reads up to three tracks for `PLATFORM` (or `CONSOLE`, `SYSTEM`) and sets the
 album's Jellyfin tags. It records the tags it added in the album's provider id `VgmLoopPlatform`, which lets it
 replace or remove them later without touching tags a user added. Albums with the Tags field locked are skipped.
@@ -44,10 +48,12 @@ replace or remove them later without touching tags a user added. Albums with the
 - `GET /VgmLoop/Items/{itemId}/Discs` (authorized, per-user visibility; album or track id): the album's named
   discs, `[{ discNumber, name, itemIds }]`. Names come from `DISCSUBTITLE` (Vorbis comments, MP4 freeform, ID3
   `TXXX`), ID3 `TSST`, or a few other spellings, read through `TagService`. For each disc it reads up to three
-  tracks and uses the first name it finds. Results are cached by path + size + mtime. With "Show disc names" off, the list is empty.
-- `POST /VgmLoop/LoopStatus` (authorized), body `{ itemIds: [...] }` (up to 1000): `{ loopItemIds }`, the
-  requested tracks the caller can see that have a playable loop. Uses the same cached LoopInfo parse. Empty when "Show
-  a loop icon" is off.
+  tracks and uses the first name it finds; the first track of every disc is read in parallel up front. With "Show
+  disc names" off, the list is empty.
+- `POST /VgmLoop/LoopStatus` (authorized), body `{ itemIds: [...] }` (up to 500): `{ loopItemIds }`, the
+  requested tracks the caller can see that have a playable loop. The tracks are looked up in one query and the files
+  read 8 at a time, since on a network share each file costs a round trip or two. Uses the same cached LoopInfo parse.
+  Empty when "Show a loop icon" is off.
 - `GET /VgmLoop/web/player.js` (anonymous; a script tag can't send auth headers).
 
 ## Client (`Web/player.js`)
@@ -98,8 +104,10 @@ there:
   once per album, keyed by the first track under a header because the header text is localized, and appends
   ` - name` in a `span.vgmloop-discName`. jellyfin-web only shows disc headers when an album has more than one disc (or
   starts above disc 1), so a single-disc album shows no name.
-- Loop icon. New `.listItem[data-type="Audio"]` rows are sent to LoopStatus in one batch, and rows that loop get an
-  inline SVG (`span.vgmloop-loopIcon`) after the title. Answers are cached per track, so a redraw makes no request.
+- Loop icon. New `.listItem[data-type="Audio"]` rows go to LoopStatus in batches of 100, in list order and up to 3
+  at a time, so a long album fills in from the top. Rows that loop get an inline SVG (`span.vgmloop-loopIcon`) after
+  the title. Answers are cached per track, so a redraw makes no request; a failed request isn't cached, so the next
+  redraw asks again.
 
 The pure functions (profile filter, position/wrap math, repeat transitions, loop-end rounding) are exported in Node
 and unit tested with `node:test`; `tools/harness/` drives the real engines in a browser with mocked jellyfin-web

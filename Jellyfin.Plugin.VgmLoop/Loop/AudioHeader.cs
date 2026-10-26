@@ -40,4 +40,22 @@ public sealed class AudioHeader
 
     /// <summary>Gets a description of what went wrong while parsing, if anything.</summary>
     public string? Error { get; init; }
+
+    /// <summary>
+    /// Returns a copy without <see cref="Tags"/>, for caching once the tags have been used.
+    /// </summary>
+    /// <returns>The copy.</returns>
+    public AudioHeader WithoutTags() => new()
+    {
+        Container = Container,
+        Codec = Codec,
+        SampleRate = SampleRate,
+        Channels = Channels,
+        BitsPerSample = BitsPerSample,
+        TotalSamples = TotalSamples,
+        PreSkip = PreSkip,
+        InputSampleRate = InputSampleRate,
+        AudioDataOffset = AudioDataOffset,
+        Error = Error
+    };
 }

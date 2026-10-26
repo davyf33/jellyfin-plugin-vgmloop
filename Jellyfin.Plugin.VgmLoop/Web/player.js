@@ -270,6 +270,32 @@
         return (firstTrackIds || []).map((id) => byTrack.get(normalizeItemId(id)) || null);
     }
 
+    /** Splits `items` into arrays of at most `size`, in order. */
+    function chunk(items, size) {
+        const out = [];
+        for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+        return out;
+    }
+
+    /**
+     * Runs `task(job)` for every job, at most `limit` at a time, starting them in order. Resolves when all have
+     * settled; a failing task doesn't stop the others.
+     */
+    function runLimited(jobs, limit, task) {
+        let next = 0;
+        const worker = async () => {
+            while (next < jobs.length) {
+                const job = jobs[next++];
+                try {
+                    await task(job);
+                } catch {
+                    // the task reports its own failure
+                }
+            }
+        };
+        return Promise.all(Array.from({ length: Math.min(limit, jobs.length) }, worker));
+    }
+
     /** The set of normalized ids in a POST /VgmLoop/LoopStatus response. */
     function loopingIds(response) {
         const ids = response && Array.isArray(response.loopItemIds) ? response.loopItemIds : [];
@@ -304,7 +330,9 @@
         normalizeItemId,
         discNamesForHeaders,
         loopingIds,
-        discNameSuffix
+        discNameSuffix,
+        chunk,
+        runLimited
     };
 
     if (typeof module === 'object' && module.exports) {
@@ -1194,7 +1222,10 @@
         const LISTS = '#listChildrenCollapsible';
         const HEADERS = 'h2.listGroupHeader:not([data-vgmloop-disc])';
         const TRACKS = '.listItem[data-type="Audio"][data-id]:not([data-vgmloop-loop])';
-        const MAX_CACHED = 5000;
+        const MAX_CACHED = 20000;
+        const LOOP_BATCH = 100;
+        const LOOP_CONCURRENCY = 3;
+        const REQUEST_TIMEOUT_MS = 30000;
         const discsByTrack = new Map(); // track id -> Promise<Discs response | null>
         const loopByTrack = new Map(); // track id -> boolean
         let scheduled = false;
@@ -1217,13 +1248,15 @@
                 const apiClient = apiClientFor(track);
                 if (!apiClient) return Promise.resolve(null);
                 if (discsByTrack.size > MAX_CACHED) discsByTrack.clear();
-                p = withTimeout(apiClient.getJSON(apiClient.getUrl('VgmLoop/Items/' + trackId + '/Discs')), 5000, 'Discs')
+                p = withTimeout(apiClient.getJSON(apiClient.getUrl('VgmLoop/Items/' + trackId + '/Discs')), REQUEST_TIMEOUT_MS, 'Discs')
                     .then((r) => {
                         // Every track of the album shares this answer, so other headers (and re-renders) skip the request.
                         for (const d of (r && r.discs) || []) for (const id of d.itemIds || []) discsByTrack.set(normalizeItemId(id), p);
                         return r;
                     })
                     .catch((e) => {
+                        // Not kept: the next redraw of the list asks again.
+                        if (discsByTrack.get(trackId) === p) discsByTrack.delete(trackId);
                         console.debug(TAG, 'disc names unavailable:', e && e.message);
                         return null;
                     });
@@ -1285,21 +1318,31 @@
             if (!unknown.length) return;
             const apiClient = apiClientFor(unknown[0]);
             if (!apiClient || typeof apiClient.ajax !== 'function') return;
-            const ids = unknown.map((t) => normalizeItemId(t.getAttribute('data-id')));
-            withTimeout(apiClient.ajax({
+            // Batches in list order, a few at a time, so the top of a long album gets its icons first and nothing
+            // waits for the whole album.
+            runLimited(chunk(unknown, LOOP_BATCH), LOOP_CONCURRENCY, (batch) => fetchLoops(apiClient, batch));
+        }
+
+        function fetchLoops(apiClient, batch) {
+            const ids = batch.map((t) => normalizeItemId(t.getAttribute('data-id')));
+            return withTimeout(apiClient.ajax({
                 type: 'POST',
                 url: apiClient.getUrl('VgmLoop/LoopStatus'),
                 data: JSON.stringify({ itemIds: ids }),
                 contentType: 'application/json',
                 dataType: 'json'
-            }), 10000, 'LoopStatus').then((r) => {
+            }), REQUEST_TIMEOUT_MS, 'LoopStatus').then((r) => {
                 const looping = loopingIds(r);
                 if (loopByTrack.size > MAX_CACHED) loopByTrack.clear();
                 for (const id of ids) loopByTrack.set(id, looping.has(id));
-                for (const t of unknown) {
+                for (const t of batch) {
                     if (looping.has(normalizeItemId(t.getAttribute('data-id')))) addLoopIcon(t);
                 }
-            }).catch((e) => console.debug(TAG, 'loop status unavailable:', e && e.message));
+            }).catch((e) => {
+                // Not kept: these rows are asked about again when the list is redrawn.
+                for (const t of batch) t.removeAttribute('data-vgmloop-loop');
+                console.debug(TAG, 'loop status unavailable:', e && e.message);
+            });
         }
 
         function scan() {

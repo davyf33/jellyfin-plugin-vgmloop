@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using Jellyfin.Plugin.VgmLoop.Discs;
+using Jellyfin.Plugin.VgmLoop.Loop;
 using Jellyfin.Plugin.VgmLoop.Tags;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -105,7 +106,7 @@ public class DiscNamesTests
         var path = WriteTemp(".flac", Synth.Flac(44100, 2, 16, 441000, ["TITLE=Field", "DISCNUMBER=2", "DISCSUBTITLE=Arrange Album"]));
         try
         {
-            var service = new TagService(NullLogger<TagService>.Instance);
+            var service = new TagService(new LoopInfoService(NullLogger<LoopInfoService>.Instance), NullLogger<TagService>.Instance);
             Assert.Equal("Arrange Album", service.GetDiscName(path));
             Assert.Equal("Arrange Album", service.GetDiscName(path)); // cached
         }
@@ -121,7 +122,7 @@ public class DiscNamesTests
         var path = WriteTemp(".mp3", Synth.Mp3WithId3Frames(("TIT2", "Field"), ("TPOS", "2/2"), ("TSST", "Sound Test")));
         try
         {
-            var service = new TagService(NullLogger<TagService>.Instance);
+            var service = new TagService(new LoopInfoService(NullLogger<LoopInfoService>.Instance), NullLogger<TagService>.Instance);
             Assert.Equal("Sound Test", service.GetDiscName(path));
         }
         finally
@@ -133,7 +134,7 @@ public class DiscNamesTests
     [Fact]
     public void Service_NoNameAndNoThrowForMissingOrUntaggedFiles()
     {
-        var service = new TagService(NullLogger<TagService>.Instance);
+        var service = new TagService(new LoopInfoService(NullLogger<LoopInfoService>.Instance), NullLogger<TagService>.Instance);
         Assert.Null(service.GetDiscName(Path.Combine(Path.GetTempPath(), "vgmloop-missing-" + Guid.NewGuid() + ".flac")));
 
         var path = WriteTemp(".flac", Synth.Flac(44100, 2, 16, 441000, ["TITLE=Field"]));
