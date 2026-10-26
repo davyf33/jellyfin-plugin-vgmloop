@@ -5,7 +5,6 @@ using System.Linq;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.VgmLoop.Discs;
 using Jellyfin.Plugin.VgmLoop.Loop;
-using Jellyfin.Plugin.VgmLoop.Platforms;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.VgmLoop.Tags;
@@ -14,15 +13,37 @@ namespace Jellyfin.Plugin.VgmLoop.Tags;
 /// What the plugin uses from one file's tags.
 /// </summary>
 /// <param name="DiscName">Disc name (subtitle), or <c>null</c>.</param>
-/// <param name="Platforms">Platforms, possibly empty.</param>
-public sealed record FileTags(string? DiscName, IReadOnlyList<string> Platforms)
+/// <param name="Fields">Album tag field values by <see cref="AlbumTagField.ProviderId"/>; fields without values are absent.</param>
+public sealed record FileTags(string? DiscName, IReadOnlyDictionary<string, IReadOnlyList<string>> Fields)
 {
     /// <summary>Gets the value for a file without usable tags.</summary>
-    public static FileTags Empty { get; } = new(null, []);
+    public static FileTags Empty { get; } = new(null, new Dictionary<string, IReadOnlyList<string>>());
+
+    /// <summary>
+    /// Builds the value from a file's tag fields.
+    /// </summary>
+    /// <param name="fields">Tag fields (key → value), any key casing.</param>
+    /// <returns>The value.</returns>
+    public static FileTags From(IEnumerable<KeyValuePair<string, string>> fields)
+    {
+        var list = fields as IReadOnlyCollection<KeyValuePair<string, string>> ?? fields.ToList();
+        return new FileTags(DiscNames.FromFields(list), AlbumTagMapper.ReadAll(list));
+    }
+
+    /// <summary>
+    /// Gets one field's values.
+    /// </summary>
+    /// <param name="field">The field.</param>
+    /// <returns>The values; empty when the file has none.</returns>
+    public IReadOnlyList<string> Values(AlbumTagField field)
+    {
+        ArgumentNullException.ThrowIfNull(field);
+        return Fields.TryGetValue(field.ProviderId, out var values) ? values : [];
+    }
 }
 
 /// <summary>
-/// Reads disc names and platforms from audio tags. FLAC and Ogg come from the loop header parse (one cached read
+/// Reads disc names and album tag fields (platform, category, series) from audio tags. FLAC and Ogg come from the loop header parse (one cached read
 /// serves the loop icon, disc names and platforms); other formats are read with ATL, the tag library Jellyfin itself
 /// uses, so MP3, M4A and the rest are covered. Cached by path + size + mtime.
 /// </summary>
@@ -76,11 +97,12 @@ public class TagService
     public string? GetDiscName(string path) => Get(path).DiscName;
 
     /// <summary>
-    /// Gets the platforms tagged in one file.
+    /// Gets one album tag field's values tagged in one file.
     /// </summary>
     /// <param name="path">Absolute path.</param>
-    /// <returns>The platforms; empty when the file has none or can't be read.</returns>
-    public IReadOnlyList<string> GetPlatforms(string path) => Get(path).Platforms;
+    /// <param name="field">The field.</param>
+    /// <returns>The values; empty when the file has none or can't be read.</returns>
+    public IReadOnlyList<string> GetValues(string path, AlbumTagField field) => Get(path).Values(field);
 
     /// <summary>
     /// Gets the tags the plugin uses from one file.
@@ -115,7 +137,7 @@ public class TagService
         try
         {
             var fields = new ATL.Track(path).AdditionalFields;
-            return new FileTags(DiscNames.FromFields(fields), PlatformTags.FromFields(fields));
+            return FileTags.From(fields);
         }
 #pragma warning disable CA1031 // A tag we can't read just means no value; never fail the caller over it.
         catch (Exception ex)

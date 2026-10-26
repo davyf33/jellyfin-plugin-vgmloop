@@ -1,7 +1,5 @@
 using System;
 using System.IO;
-using Jellyfin.Plugin.VgmLoop.Discs;
-using Jellyfin.Plugin.VgmLoop.Platforms;
 using Jellyfin.Plugin.VgmLoop.Tags;
 using Microsoft.Extensions.Logging;
 
@@ -14,7 +12,7 @@ namespace Jellyfin.Plugin.VgmLoop.Loop;
 /// <param name="Loop">Resolved loop points.</param>
 /// <param name="FileSize">File size in bytes.</param>
 /// <param name="Version">Cache version string (<c>size-mtimeTicks</c>).</param>
-/// <param name="Tags">Disc name and platforms from the same Vorbis comments, so FLAC and Ogg need no second read.</param>
+/// <param name="Tags">Disc name and album tag fields from the same Vorbis comments, so FLAC and Ogg need no second read.</param>
 public sealed record FileLoopInfo(AudioHeader Header, LoopResolution Loop, long FileSize, string Version, FileTags Tags);
 
 /// <summary>
@@ -92,7 +90,7 @@ public class LoopInfoService
         using var stream = new FileStream(file.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, bufferSize: 64 * 1024, FileOptions.RandomAccess);
         var header = HeaderParser.Parse(stream);
         var loop = ResolveHeader(header);
-        var tags = new FileTags(DiscNames.FromFields(header.Tags), PlatformTags.FromFields(header.Tags));
+        var tags = FileTags.From(header.Tags);
         _logger.LogDebug(
             "VGM Loop: {Path}: {Codec} {Rate} Hz total={Total} loop={HasLoop} {Start}..{End} ({Reason})",
             file.FullName,

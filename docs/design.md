@@ -32,13 +32,19 @@ inclusive. A loop must satisfy `0 <= start < end <= total` and be at least 0.1 s
 Parsed results are cached by path + size + mtime (`FileCache`, 50,000 files; the full Vorbis comments are dropped
 once used, so entries stay small). Concurrent requests for one file share a single read.
 
-**Tags** (`Tags/`, `Discs/`, `Platforms/`). `TagService` gives the disc name and platforms of a file. For FLAC and
-Ogg they come from the loop header parse above, so one cached read covers the loop icon, disc names and platforms.
-Other formats (MP3, M4A, ...) are read with ATL, the tag library the server already loads (the plugin compiles
-against it and doesn't ship its own copy). `PlatformTagsPostScanTask` is an `ILibraryPostScanTask`, so it runs after every
-library scan. For each music album it reads up to three tracks for `PLATFORM` (or `CONSOLE`, `SYSTEM`) and sets the
-album's Jellyfin tags. It records the tags it added in the album's provider id `VgmLoopPlatform`, which lets it
-replace or remove them later without touching tags a user added. Albums with the Tags field locked are skipped.
+**Tags** (`Tags/`, `Discs/`). `TagService` gives a file's disc name and album tag fields. For FLAC and Ogg they come
+from the loop header parse above, so one cached read covers the loop icon, disc names and album tags. Other formats
+(MP3, M4A, ...) are read with ATL, the tag library the server already loads (the plugin compiles against it and
+doesn't ship its own copy).
+
+`AlbumTagFields` lists the file tags that become Jellyfin tags on albums. Each entry has its keys, a provider id and
+a setting: `PLATFORM`/`CONSOLE`/`SYSTEM` (`VgmLoopPlatform`), `RELEASECATEGORY` (`VgmLoopCategory`) and
+`SERIES`/`FRANCHISE` (`VgmLoopSeries`). `AlbumTagsPostScanTask` is an `ILibraryPostScanTask`, so it runs after every
+library scan. For each music album it reads up to three tracks and takes each field from the first track that has it
+(values split on U+001F, `;` and `|`, at most 5). `AlbumTagMapper.Plan` then works out the new tags. Each field
+records the tags it added in its own provider id. A field only removes tags it recorded, and only when no other
+field still wants them. A value the user already had as a tag isn't recorded, so it is never removed. A disabled
+field's tags and record are left as they are. Albums with the Tags field locked are skipped.
 
 **API** (`Api/`).
 

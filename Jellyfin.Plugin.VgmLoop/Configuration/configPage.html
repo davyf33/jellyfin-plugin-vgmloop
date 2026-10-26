@@ -45,6 +45,24 @@
                             After each library scan, albums get a tag per platform from their files' PLATFORM tag (e.g. "Nintendo 3DS"), so you can filter music by platform under Filter &rarr; Tags. Works on its own, without the player.
                         </div>
                     </div>
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label class="emby-checkbox-label">
+                            <input id="EnableCategoryTags" name="EnableCategoryTags" type="checkbox" is="emby-checkbox" />
+                            <span>Tag albums with their release category</span>
+                        </label>
+                        <div class="fieldDescription checkboxFieldDescription">
+                            From the RELEASECATEGORY tag, e.g. "Official Soundtrack" or "Game Rip".
+                        </div>
+                    </div>
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label class="emby-checkbox-label">
+                            <input id="EnableSeriesTags" name="EnableSeriesTags" type="checkbox" is="emby-checkbox" />
+                            <span>Tag albums with their series</span>
+                        </label>
+                        <div class="fieldDescription checkboxFieldDescription">
+                            From the SERIES (or FRANCHISE) tag, e.g. "Animal Crossing". Turning a tag option off stops updating those tags but doesn't remove the ones already there.
+                        </div>
+                    </div>
                     <div>
                         <button is="emby-button" type="submit" class="raised button-submit block emby-button">
                             <span>Save</span>
@@ -66,6 +84,8 @@
                         document.querySelector('#EnableDiscNames').checked = config.EnableDiscNames !== false;
                         document.querySelector('#EnableLoopIcons').checked = config.EnableLoopIcons !== false;
                         document.querySelector('#EnablePlatformTags').checked = config.EnablePlatformTags !== false;
+                        document.querySelector('#EnableCategoryTags').checked = config.EnableCategoryTags !== false;
+                        document.querySelector('#EnableSeriesTags').checked = config.EnableSeriesTags !== false;
                         Dashboard.hideLoadingMsg();
                     });
                 });
@@ -78,6 +98,8 @@
                         config.EnableDiscNames = document.querySelector('#EnableDiscNames').checked;
                         config.EnableLoopIcons = document.querySelector('#EnableLoopIcons').checked;
                         config.EnablePlatformTags = document.querySelector('#EnablePlatformTags').checked;
+                        config.EnableCategoryTags = document.querySelector('#EnableCategoryTags').checked;
+                        config.EnableSeriesTags = document.querySelector('#EnableSeriesTags').checked;
                         ApiClient.updatePluginConfiguration(VgmLoopConfig.pluginUniqueId, config).then(function (result) {
                             Dashboard.processPluginConfigurationUpdateResult(result);
                         });
