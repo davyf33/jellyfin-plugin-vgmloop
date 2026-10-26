@@ -114,6 +114,7 @@ dotnet test                 # build + C# unit tests
 node --test 'tests/js/*.test.mjs'   # player.js unit tests
 tools/harness/serve.sh      # browser harness: http://localhost:8765/plain.html and /loop.html
 scripts/package.sh          # artifacts/VGM Loop_<version>/ and artifacts/vgm-loop_<version>.zip
+JELLYFIN=/path/to/jellyfin LIVE=1 tools/e2e/run.sh   # end-to-end against a fresh real server, then player.js in Chromium
 ```
 
 Releasing: bump nothing by hand. Push an annotated tag whose message is the changelog:

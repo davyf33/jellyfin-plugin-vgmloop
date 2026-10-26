@@ -58,9 +58,18 @@ field's tags and record are left as they are. Albums with the Tags field locked 
   disc names" off, the list is empty.
 - `POST /VgmLoop/LoopStatus` (authorized), body `{ itemIds: [...] }` (up to 500): `{ loopItemIds }`, the
   requested tracks the caller can see that have a playable loop. The tracks are looked up in one query and the files
-  read 8 at a time, since on a network share each file costs a round trip or two. Uses the same cached LoopInfo parse.
+  read 8 at a time, since on a network share each file costs a round trip or two. That query doesn't enforce library
+  access on its own (a user with no libraries enabled gets no library filter at all), so each track also goes through
+  `IsVisibleStandalone`, the check `GetItemById(id, user)` uses. Uses the same cached LoopInfo parse.
   Empty when "Show a loop icon" is off.
 - `GET /VgmLoop/web/player.js` (anonymous; a script tag can't send auth headers).
+- The empty id (all zeros) is 404 for LoopInfo and Discs (Jellyfin's `GetItemById` throws on it).
+
+`tools/e2e/` checks all of this against a real server: `run.sh` starts a fresh Jellyfin with the plugin and a
+generated 961-file library, and `e2e.py` covers the injection, the API, album tags across rescans (retagging files with
+ffmpeg), a user without library access and cold-cache timings. With `LIVE=1`, `live.mjs` then runs player.js in
+Chromium against the same server: play-through on a real cut rip, the Opus seam, plain playback, and disc names and
+loop icons on the 950-track album.
 
 ## Client (`Web/player.js`)
 
