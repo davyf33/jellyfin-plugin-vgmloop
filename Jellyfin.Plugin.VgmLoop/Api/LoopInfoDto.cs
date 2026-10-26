@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
+using Jellyfin.Plugin.VgmLoop.Configuration;
 using Jellyfin.Plugin.VgmLoop.Loop;
 
 namespace Jellyfin.Plugin.VgmLoop.Api;
@@ -71,6 +72,14 @@ public sealed class LoopInfoDto
     [JsonPropertyName("fileSize")]
     public long FileSize { get; set; }
 
+    /// <summary>Gets or sets how many loop passes play-through plays before fading; absent when play-through is off.</summary>
+    [JsonPropertyName("playthroughLoops")]
+    public int? PlaythroughLoops { get; set; }
+
+    /// <summary>Gets or sets the play-through fade length in seconds; absent when play-through is off.</summary>
+    [JsonPropertyName("playthroughFadeSeconds")]
+    public double? PlaythroughFadeSeconds { get; set; }
+
     /// <summary>Gets or sets the size-mtime version string.</summary>
     [JsonPropertyName("version")]
     public string Version { get; set; } = string.Empty;
@@ -80,10 +89,12 @@ public sealed class LoopInfoDto
     /// </summary>
     /// <param name="itemId">Item id.</param>
     /// <param name="info">File loop info.</param>
+    /// <param name="config">Plugin settings (play-through), or <c>null</c> for the defaults.</param>
     /// <returns>The DTO.</returns>
-    public static LoopInfoDto From(Guid itemId, FileLoopInfo info)
+    public static LoopInfoDto From(Guid itemId, FileLoopInfo info, PluginConfiguration? config = null)
     {
         ArgumentNullException.ThrowIfNull(info);
+        config ??= new PluginConfiguration();
         var h = info.Header;
         var l = info.Loop;
         return new LoopInfoDto
@@ -102,6 +113,8 @@ public sealed class LoopInfoDto
             Convention = l.Convention,
             RawTags = l.RawTags,
             Reason = l.Reason,
+            PlaythroughLoops = config.EnablePlaythrough ? Math.Clamp(config.PlaythroughLoops, 1, 5) : null,
+            PlaythroughFadeSeconds = config.EnablePlaythrough ? Math.Clamp(config.PlaythroughFadeSeconds, 0, 30) : null,
             FileSize = info.FileSize,
             Version = info.Version
         };

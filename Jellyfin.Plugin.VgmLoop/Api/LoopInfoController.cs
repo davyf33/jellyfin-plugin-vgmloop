@@ -94,7 +94,7 @@ public class LoopInfoController : ControllerBase
             return NotFound();
         }
 
-        return new JsonResult(LoopInfoDto.From(item.Id, info));
+        return new JsonResult(LoopInfoDto.From(item.Id, info, Plugin.Instance?.Configuration));
     }
 
     /// <summary>

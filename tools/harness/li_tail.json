@@ -1,0 +1,1 @@
+{"itemId":"tail","hasLoop":true,"codec":"flac","container":"flac","sampleRate":32000,"channels":2,"totalSamples":192000,"audioDataOffset":0,"loopStart":32000,"loopEnd":96000,"convention":"start+length","rawTags":{"LOOPSTART":"32000","LOOPLENGTH":"64000"},"playthroughLoops":2,"playthroughFadeSeconds":1}

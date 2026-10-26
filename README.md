@@ -10,13 +10,20 @@ Requires Jellyfin **12.2** (for 12.1, install VGM Loop 1.0). Works in the web cl
 
 - Turn on **Repeat One** (the repeat button: off → all → one). A track with loop tags then plays its intro once and
   loops `LOOPSTART` → `LOOPEND` forever, with no gap. The seek bar wraps back to the loop start.
-- Repeat off / Repeat all: the track plays once, start to finish, and the queue moves on.
+- Repeat off / Repeat all: the track plays once, start to finish, and the queue moves on. The exception is a cut rip, a
+  loop track that stops right at the loop end (less than 2 s of audio after it). Played once, it would cut off
+  mid-phrase, so instead it plays the intro, the loop twice, then fades out over 10 s while still looping, the way game
+  OSTs end their tracks. Then the queue moves on. The seek bar shows that whole length, and the track counts as played
+  once the fade ends. Files with a real ending or their own fade after the loop play as before. Set the loop count
+  (1-5) and fade length (0-30 s), or turn this off, in the plugin settings.
 - **Next** always skips to the next track, even in Repeat One (which stays on, so the next track loops too). At the end
   of the queue it wraps to the first track. When a track ends by itself in Repeat One it repeats, as before.
 - The repeat mode you pick for music sticks: starting another track or album keeps it (stock jellyfin-web resets it
   to off), and it is remembered across page reloads in that browser. Video and other non-music queues are unaffected.
 - Switching repeat mid-track takes effect immediately. Leaving Repeat One lets the current pass finish and the track
-  play out; switching to Repeat One starts looping unless the loop is already behind you (an outro).
+  play out; switching to Repeat One starts looping unless the loop is already behind you (an outro). On a cut rip,
+  leaving Repeat One starts the play-through from where you are (the pass you're in counts as the first), and turning
+  Repeat One on during the fade cancels it, brings the volume back up and keeps looping.
 - Tracks without loop tags, and MP3/AAC files, play exactly as with the stock player.
 - Loop tracks are downloaded whole and decoded in the browser (a 4-minute stereo track is ~90 MB of memory). To avoid a
   pause between tracks, the next track in the queue is preloaded a few seconds into the current one when it has loop
@@ -94,6 +101,7 @@ Per-browser switches (work on phones too; open the URL once, the setting sticks 
 | `https://SERVER/web/?vgmloop=stream` | loop tracks play through a hidden `<audio>` element (fallback if media keys / Now Playing don't control loop tracks in some browser) |
 | `https://SERVER/web/?vgmloop=direct` | loop tracks play straight to Web Audio output (default) |
 | `https://SERVER/web/?vgmloop=prefetch-off` | don't preload the next loop track (e.g. to save mobile data); `prefetch-on` restores it |
+| `https://SERVER/web/?vgmloop=playthrough-off` | play cut rips once, stopping at the loop end, instead of looping and fading; `playthrough-on` restores it |
 
 Differences from the stock audio player: no hls.js, so audio transcodes are delivered as progressive HTTP (aac/mp3/opus) and the
 "always remux FLAC/MP3" settings are ignored for music (the original file is played directly). When audio normalization is

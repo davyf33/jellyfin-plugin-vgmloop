@@ -137,6 +137,66 @@
         return { anchor: { ctxTime0: now, pos0: pos, looping }, crossed };
     }
 
+    // ---- play-through ("loop N times, then fade") for cut rips outside Repeat One
+
+    /** Most audio after loopEnd for a file to count as a cut rip (one that stops dead at the loop end). */
+    const CUT_RIP_TAIL_SECONDS = 2;
+
+    /** Fade floor, relative to the current volume: -60 dB. */
+    const FADE_FLOOR = 0.001;
+
+    /** True when the file ends (almost) at loopEnd, so playing it once would stop mid-phrase. */
+    function isCutRip(total, loopEnd, rate) {
+        return total > 0 && rate > 0 && loopEnd > 0 && total - loopEnd < CUT_RIP_TAIL_SECONDS * rate;
+    }
+
+    /**
+     * Play-through settings from LoopInfo, or null when off. `localOff` is the per-browser switch
+     * (?vgmloop=playthrough-off). Loops are clamped to 1-5 and the fade to 0-30 s.
+     */
+    function playthroughSettings(info, localOff) {
+        if (localOff || !info || !(info.playthroughLoops >= 1)) return null;
+        const loops = Math.min(5, Math.max(1, Math.round(info.playthroughLoops)));
+        const fade = Math.min(30, Math.max(0, Number(info.playthroughFadeSeconds) || 0));
+        return { loops, fade };
+    }
+
+    /** True when a track should play through: not Repeat One, a cut rip, and play-through on. */
+    function playthroughApplies(repeatMode, settings, total, loopStart, loopEnd, rate) {
+        return !!settings && repeatMode !== 'RepeatOne' && loopEnd > loopStart && isCutRip(total, loopEnd, rate);
+    }
+
+    /**
+     * The play-through timeline in samples: intro, `loops` passes of the loop, then `fade` seconds of fading while
+     * still looping. `fadeStart` is where the fade begins, `end` where the track ends.
+     */
+    function playthroughTimeline(loopStart, loopEnd, rate, settings) {
+        const fadeStart = loopStart + settings.loops * (loopEnd - loopStart);
+        return { fadeStart, end: fadeStart + Math.round(settings.fade * rate) };
+    }
+
+    /** A play-through timeline position -> the file position playing at that moment. */
+    function timelineToFile(v, loopStart, loopEnd) {
+        if (v < loopEnd) return Math.max(0, v);
+        return loopStart + ((v - loopStart) % (loopEnd - loopStart));
+    }
+
+    /** Fade factor (1 -> FADE_FLOOR, dB-linear) at timeline position v; 0 once the track has ended. */
+    function fadeFactorAt(v, timeline) {
+        if (v < timeline.fadeStart) return 1;
+        if (v >= timeline.end) return 0;
+        return Math.pow(FADE_FLOOR, (v - timeline.fadeStart) / (timeline.end - timeline.fadeStart));
+    }
+
+    /**
+     * Stop position reported to Jellyfin from play-through: the timeline fraction mapped onto the file, so the
+     * track only counts as played near the end of the fade (and fully when it ends by itself).
+     */
+    function playthroughReportPosition(v, timeline, total) {
+        if (!(timeline.end > 0)) return 0;
+        return Math.floor(Math.min(1, Math.max(0, v / timeline.end)) * total);
+    }
+
     /**
      * Position reported to Jellyfin when a loop track stops (drives "played" status). A track that has
      * crossed the seam at least once reports the end of its first pass. Change the policy here.
@@ -332,7 +392,14 @@
         loopingIds,
         discNameSuffix,
         chunk,
-        runLimited
+        runLimited,
+        isCutRip,
+        playthroughSettings,
+        playthroughApplies,
+        playthroughTimeline,
+        timelineToFile,
+        fadeFactorAt,
+        playthroughReportPosition
     };
 
     if (typeof module === 'object' && module.exports) {
@@ -739,7 +806,8 @@
     //   /web/?vgmloop=off | on          disable / re-enable the player in this browser
     //   /web/?vgmloop=stream | direct   loop-engine output via <audio srcObject=MediaStream> | AudioContext.destination
     //   /web/?vgmloop=prefetch-off | prefetch-on   preloading of the next loop track
-    const SETTINGS = { disabled: 'vgmloop.disabled', output: 'vgmloop.output', repeat: 'vgmloop.repeatMode', prefetch: 'vgmloop.prefetch' };
+    //   /web/?vgmloop=playthrough-off | playthrough-on   "loop N times, then fade" for cut rips outside Repeat One
+    const SETTINGS = { disabled: 'vgmloop.disabled', output: 'vgmloop.output', repeat: 'vgmloop.repeatMode', prefetch: 'vgmloop.prefetch', playthrough: 'vgmloop.playthrough' };
 
     function readSetting(key) {
         try {
@@ -770,10 +838,13 @@
         else if (v === 'on') writeSetting(SETTINGS.disabled, null);
         else if (v === 'stream' || v === 'direct') writeSetting(SETTINGS.output, v);
         else if (v === 'prefetch-off') writeSetting(SETTINGS.prefetch, 'off');
+        else if (v === 'playthrough-off') writeSetting(SETTINGS.playthrough, 'off');
+        else if (v === 'playthrough-on') writeSetting(SETTINGS.playthrough, null);
         else if (v === 'prefetch-on') writeSetting(SETTINGS.prefetch, null);
         else return;
         pendingNotice = 'VGM Loop: ' + (v === 'off' ? 'disabled in this browser' : v === 'on' ? 'enabled'
-            : v.startsWith('prefetch') ? 'preloading ' + v.slice(9) : 'loop output = ' + v);
+            : v.startsWith('prefetch') ? 'preloading ' + v.slice(9)
+                : v.startsWith('playthrough') ? 'play-through ' + v.slice(12) : 'loop output = ' + v);
         console.info(TAG, pendingNotice);
     })();
 
@@ -874,12 +945,20 @@
         }
 
         _clear() {
+            // Put back the seek-bar length play-through may have changed (any way the track ends or is replaced).
+            if (this._mediaSource) this._mediaSource.RunTimeTicks = this._runTimeTicks;
             this.info = null;
             this.buffer = null;
             this.source = null;
             this.gain = null;
             this.anchor = null;
             this.crossed = false;
+            // Play-through: { loops, fade } from LoopInfo, and while active { fadeStart, end, v0 } (timeline samples;
+            // v0 is the timeline position at anchor.ctxTime0).
+            this._ptSettings = null;
+            this.pt = null;
+            this._mediaSource = null;
+            this._runTimeTicks = undefined;
             this._paused = false;
             this._src = null;
             this._reportPos = null;
@@ -911,6 +990,9 @@
             this._clear();
             this.info = info;
             this._src = options.url;
+            this._mediaSource = options.mediaSource || null;
+            this._runTimeTicks = this._mediaSource ? this._mediaSource.RunTimeTicks : undefined;
+            this._ptSettings = playthroughSettings(info, readSetting(SETTINGS.playthrough) === 'off');
 
             const item = options.item;
             const apiClient = this.deps.ServerConnections.getApiClient(item.ServerId);
@@ -970,7 +1052,7 @@
                 this._applyGain();
 
                 const startMs = (options.playerStartPositionTicks || 0) / 10000;
-                this._startSource(startMs ? msToSamples(startMs, info.sampleRate, buffer.length) : 0);
+                this._startAt(startMs ? Math.round((startMs / 1000) * info.sampleRate) : 0);
 
                 if (ctx.state !== 'running') {
                     await withTimeout(ctx.resume(), 2000, 'AudioContext.resume');
@@ -1001,22 +1083,77 @@
             return dbToLinear(normalizationGainDb(mode, options.item, options.mediaSource));
         }
 
-        _applyGain() {
-            if (!this.gain) return;
-            const g = this.player._muted ? 0 : this._volume * this._norm;
-            const p = this.gain.gain;
-            p.cancelScheduledValues(0);
-            p.value = g;
+        _targetGain() {
+            return this.player._muted ? 0 : this._volume * this._norm;
         }
 
-        _startSource(pos) {
+        /**
+         * Sets the gain for the current volume, mute and normalization. During play-through it also schedules the
+         * fade (dB-linear, exponentialRampToValueAtTime down to -60 dB) from the current timeline position, so volume
+         * changes, seeks and pauses keep it in step. `rampSeconds` eases into the new level instead of jumping.
+         */
+        _applyGain(rampSeconds, fromLevel) {
+            if (!this.gain) return;
+            const g = this._targetGain();
+            const p = this.gain.gain;
+            const ctx = this._ctx;
+            const current = fromLevel != null ? fromLevel : p.value; // read before cancelling the automation
+            p.cancelScheduledValues(0);
+            const pt = this.pt;
+            if (!ctx || (!pt && !rampSeconds)) {
+                p.value = g;
+                return;
+            }
+            const now = ctx.currentTime;
+            if (!pt) {
+                p.setValueAtTime(current, now);
+                p.linearRampToValueAtTime(g, now + rampSeconds);
+                return;
+            }
+            const rate = this._rate;
+            const v = this._timelinePos();
+            p.setValueAtTime(g * fadeFactorAt(v, pt), now);
+            if (g <= 0 || v >= pt.end) return;
+            const tEnd = now + (pt.end - v) / rate;
+            if (pt.end > pt.fadeStart) {
+                if (v < pt.fadeStart) p.setValueAtTime(g, now + (pt.fadeStart - v) / rate);
+                p.exponentialRampToValueAtTime(g * FADE_FLOOR, tEnd);
+            }
+            // Silent from the exact end on: the timer that stops the track can be up to 250 ms late.
+            p.setValueAtTime(0, tEnd);
+        }
+
+        /** True when play-through applies to this track in `repeatMode`. */
+        _ptApplies(repeatMode) {
+            const info = this.info;
+            return playthroughApplies(repeatMode, this._ptSettings, this._total, info.loopStart, info.loopEnd, info.sampleRate);
+        }
+
+        /**
+         * Starts at a seek-bar position in samples: the play-through timeline when play-through applies (positions
+         * past the first pass map back into the loop), else the file.
+         */
+        _startAt(samples) {
+            const info = this.info;
+            if (this._ptApplies(this._repeatMode())) {
+                const timeline = playthroughTimeline(info.loopStart, info.loopEnd, info.sampleRate, this._ptSettings);
+                const v = Math.max(0, Math.min(timeline.end - 1, samples));
+                this._startSource(timelineToFile(v, info.loopStart, info.loopEnd), Object.assign(timeline, { v0: v }));
+            } else {
+                this._startSource(Math.max(0, Math.min(this._total > 0 ? this._total - 1 : 0, samples)), null);
+            }
+        }
+
+        /** `pt` is the play-through timeline to run (with v0 = timeline position of `pos`), or null. */
+        _startSource(pos, pt) {
             const ctx = this._ctx;
             const info = this.info;
             const src = ctx.createBufferSource();
             src.buffer = this.buffer;
             src.loopStart = info.loopStart / info.sampleRate;
             src.loopEnd = loopEndSeconds(info.loopEnd, info.sampleRate);
-            const looping = shouldLoop(this._repeatMode(), pos, info.loopEnd);
+            // Play-through keeps looping through the fade; the timer ends it.
+            const looping = pt ? true : shouldLoop(this._repeatMode(), pos, info.loopEnd);
             src.loop = looping;
             src.connect(this.gain);
             src.onended = () => {
@@ -1027,6 +1164,23 @@
             src.start(0, pos / info.sampleRate);
             this.source = src;
             this.anchor = { ctxTime0: ctx.currentTime, pos0: pos, looping };
+            this._setPlaythrough(pt);
+        }
+
+        /** Turns play-through on (timeline with v0 at the current anchor) or off, and keeps the seek bar in step. */
+        _setPlaythrough(pt, rampSeconds, fromLevel) {
+            this.pt = pt;
+            // jellyfin-web sizes the seek bar from the media source's RunTimeTicks, so show the play-through length.
+            if (this._mediaSource) {
+                this._mediaSource.RunTimeTicks = pt ? Math.round((pt.end / this._rate) * 1e7) : this._runTimeTicks;
+            }
+            this._applyGain(rampSeconds, fromLevel);
+        }
+
+        /** Current play-through timeline position in samples (only meaningful while this.pt is set). */
+        _timelinePos() {
+            if (!this.pt || !this.anchor || !this._ctx) return 0;
+            return this.pt.v0 + Math.max(0, this._ctx.currentTime - this.anchor.ctxTime0) * this._rate;
         }
 
         _stopSource() {
@@ -1054,6 +1208,12 @@
             this._stopTimer();
             this._timer = setInterval(() => {
                 this._pos();
+                if (this.pt && this._timelinePos() >= this.pt.end) {
+                    // The fade has run out (the gain is at -60 dB or below): end like a natural end, so the queue moves on.
+                    this.player._markAutoAdvance();
+                    this._finish(this._total);
+                    return;
+                }
                 this.player._trigger('timeupdate');
             }, 250);
         }
@@ -1080,6 +1240,8 @@
             this._stopSource();
             contexts.pauseOutput(); // don't leave a silent stream "playing" if the next track is plain
             this._reportPos = reportPos;
+            this.pt = null;
+            if (this._mediaSource) this._mediaSource.RunTimeTicks = this._runTimeTicks;
             const src = this._src;
             this.player._trigger('stopped', [{ src }]);
             this._teardown();
@@ -1089,6 +1251,30 @@
         onRepeatModeChange() {
             if (!this.source || !this.anchor || !this._ctx) return;
             const info = this.info;
+            const mode = this._repeatMode();
+            const now = this._ctx.currentTime;
+            if (this.pt && mode === 'RepeatOne') {
+                // Repeat One during play-through (even mid-fade): cancel the fade, ramp back up, keep looping.
+                const pos = this._pos();
+                const level = this._targetGain() * fadeFactorAt(this._timelinePos(), this.pt);
+                this.source.loop = shouldLoop(mode, pos, info.loopEnd);
+                this.anchor = { ctxTime0: now, pos0: pos, looping: this.source.loop };
+                this._setPlaythrough(null, 0.5, level);
+                console.debug(TAG, 'play-through off (Repeat One) at sample ' + Math.round(pos));
+                this.player._trigger('timeupdate');
+                return;
+            }
+            if (this.pt) return; // None <-> All: play-through continues
+            if (this.anchor.looping && this._ptApplies(mode)) {
+                // Leaving Repeat One mid-track on a cut rip: count the passes from here (this pass is the first).
+                const pos = this._pos();
+                this.anchor = { ctxTime0: now, pos0: pos, looping: true };
+                const timeline = playthroughTimeline(info.loopStart, info.loopEnd, info.sampleRate, this._ptSettings);
+                this._setPlaythrough(Object.assign(timeline, { v0: pos }));
+                console.debug(TAG, 'play-through on at sample ' + Math.round(pos));
+                this.player._trigger('timeupdate');
+                return;
+            }
             const t = repeatTransition(this.anchor, this._ctx.currentTime, info.sampleRate, info.loopStart, info.loopEnd, this._total, this._repeatMode());
             if (!t) return;
             if (t.crossed) this.crossed = true;
@@ -1110,7 +1296,9 @@
                 return;
             }
 
-            const report = stopReportPosition(this._pos(), this.crossed, this.info.loopEnd);
+            const report = this.pt
+                ? playthroughReportPosition(this._timelinePos(), this.pt, this._total)
+                : stopReportPosition(this._pos(), this.crossed, this.info.loopEnd);
             const ctx = this._ctx;
             if (this.gain && ctx && ctx.state === 'running') {
                 // Short ramp avoids a click; a longer fade when playback is being torn down (stock fades too).
@@ -1141,21 +1329,26 @@
                 return undefined;
             }
             if (!this.info) return 0;
-            const pos = this._reportPos != null ? this._reportPos : this._pos();
-            return (pos / this._rate) * 1000;
+            if (this._reportPos != null) return (this._reportPos / this._rate) * 1000;
+            if (this.pt) {
+                this._pos(); // still records seam crossings
+                return (this._timelinePos() / this._rate) * 1000;
+            }
+            return (this._pos() / this._rate) * 1000;
         }
 
         _seek(ms) {
             if (!this.buffer || !this.source) return;
             this._pos(); // record a seam crossing before re-anchoring
             this._stopSource();
-            this._startSource(msToSamples(ms, this._rate, this._total));
+            this._startAt(Math.round((Math.max(0, ms) / 1000) * this._rate));
             this.player._trigger('timeupdate');
         }
 
-        duration() { return this.info ? (this._total / this._rate) * 1000 : null; }
+        _lengthSamples() { return this.pt ? this.pt.end : this._total; }
+        duration() { return this.info ? (this._lengthSamples() / this._rate) * 1000 : null; }
         seekable() { return !!this.buffer; }
-        getBufferedRanges() { return this.buffer ? [{ start: 0, end: (this._total / this._rate) * 10000000 }] : []; }
+        getBufferedRanges() { return this.buffer ? [{ start: 0, end: (this._lengthSamples() / this._rate) * 10000000 }] : []; }
 
         pause() {
             const ctx = this._ctx;

@@ -79,6 +79,23 @@ every music track (`item.Type === 'Audio'`) so the player never changes mid-queu
 **Repeat integration.** Looping follows jellyfin-web's repeat button: Repeat One loops forever; Repeat off / all plays
 the file once. Changing the mode mid-track re-anchors the position model without restarting (leaving Repeat One lets
 the track play out; entering it starts looping unless the playhead is already past the loop end).
+**Play-through.** A cut rip is a loop track with less than 2 s of audio after `loopEnd` (`isCutRip`). Outside Repeat
+One it plays on a longer timeline instead of stopping dead: intro, N passes of the loop, then F seconds of fading while
+still looping (`playthroughTimeline`; N and F come from the plugin settings via LoopInfo's `playthroughLoops` and
+`playthroughFadeSeconds`, which are absent when it is off; `?vgmloop=playthrough-off` turns it off per browser). The
+source keeps looping. A timeline position maps back to the file with the loop-wrap formula (`timelineToFile`), and the
+anchor carries the timeline position `v0` next to the file position. The fade is a dB-linear
+`exponentialRampToValueAtTime` on the GainNode down to -60 dB relative to the current volume. `_applyGain` schedules it
+from the current timeline position, so volume changes, mute, seeks and pauses stay in step. The 250 ms timer ends the
+track once the timeline passes its end, which counts as a natural end (the queue advances). Because jellyfin-web sizes
+the seek bar from the media source's `RunTimeTicks`, the engine sets that to the play-through length while it runs and
+puts the original back whenever the track ends, stops or is replaced. A stop reports the timeline fraction of the
+file (`playthroughReportPosition`), so the track counts as played near the end of the fade, and fully when the fade
+ends. Repeat One during play-through (even mid-fade) cancels it, ramps back up over 0.5 s and loops as usual.
+Leaving Repeat One mid-track on a cut rip starts play-through with the current position as the timeline position, so
+the pass in progress counts as the first. `tools/harness/playthrough.html` drives all of this with two generated
+tones.
+
 In Repeat One, jellyfin-web's Next would replay the current track; `installNextTrackOverride()` wraps
 `playbackManager.nextTrack` so a user-initiated Next moves to the next queue item (wrapping like Repeat All) while
 Repeat One stays selected. A natural end marks the following `nextTrack()` as an automatic advance, which keeps the
