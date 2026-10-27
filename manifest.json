@@ -3,6 +3,14 @@
     "guid": "f19dceed-5dce-4a6e-b77c-1b0ccdf8709a",
     "versions": [
       {
+        "version": "1.2.1.0",
+        "changelog": "Per disc play/shuffle, bug fixes",
+        "targetAbi": "12.2.0.0",
+        "sourceUrl": "https://github.com/davyf33/jellyfin-plugin-vgmloop/releases/download/v1.2.1.0/vgm-loop_1.2.1.0.zip",
+        "checksum": "6dc0599ecd4ca2bfb29f93b5d1bd85b1",
+        "timestamp": "2026-10-27T13:14:06Z"
+      },
+      {
         "version": "1.2.0.0",
         "changelog": "Expanded Tag support, and added 'n' loop playback with fade as default playback type",
         "targetAbi": "12.2.0.0",
