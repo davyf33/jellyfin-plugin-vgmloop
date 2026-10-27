@@ -121,9 +121,10 @@ public class LoopInfoController : ControllerBase
             return BadRequest("Not a music album or track.");
         }
 
+        var buttons = Plugin.Instance?.Configuration.EnableDiscButtons != false;
         if (Plugin.Instance?.Configuration.EnableDiscNames == false)
         {
-            return new JsonResult(DiscsDto.From(album.Id, []));
+            return new JsonResult(DiscsDto.From(album.Id, [], buttons));
         }
 
         IEnumerable<BaseItem> children = user is not null
@@ -141,7 +142,7 @@ public class LoopInfoController : ControllerBase
             .Select(t => new DiscTrack(t.Id, t.ParentIndexNumber, t.IndexNumber, t.Path))
             .ToList();
 
-        return new JsonResult(DiscsDto.From(album.Id, _tagService.GetDiscs(tracks)));
+        return new JsonResult(DiscsDto.From(album.Id, _tagService.GetDiscs(tracks), buttons));
     }
 
     /// <summary>

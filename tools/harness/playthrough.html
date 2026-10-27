@@ -26,7 +26,7 @@ const Events = {
 const store = new Map();
 const appSettings = { get: (k, u) => store.get((u ? u + '-' : '') + k) ?? null, set: (k, v, u) => store.set((u ? u + '-' : '') + k, v) };
 let repeatMode = 'RepeatNone';
-const files = { cut: 'cut.flac', tail: 'tail.flac' };
+const files = { cut: 'cut.flac', tail: 'tail.flac', tailall: 'tail.flac' };
 const apiClient = {
   accessToken: () => 'tok',
   getUrl(path, params) {
@@ -89,11 +89,23 @@ document.getElementById('run').addEventListener('click', async () => {
     await sleep(50);
     check('cut: seek past the first pass maps into the loop', near(p.currentTime(), 4550, 80) && near(e._pos(), 80000 + 1600, 2600), [p.currentTime(), e._pos()]);
 
-    // seek to mid-fade: 5.5 s -> about -30 dB
+    // fade shape (1 s fade from 5 s to 6 s): linear in amplitude, so 75% / 50% / 25% of the volume at 1/4, 1/2, 3/4
+    // AudioParam.value lags the schedule by a render quantum or so, so compare against the linear value at the
+    // timeline position of the moment it was read, after giving the render thread time to catch up.
+    const shape = [];
+    for (const ms of [5200, 5450, 5700]) {
+      p.currentTime(ms);
+      await sleep(80);
+      const v = e._timelinePos();
+      shape.push({ got: e.gain.gain.value / G, want: 1 - (v - 160000) / 32000 });
+    }
+    check('cut: fade follows a straight line in amplitude', shape.every((x) => near(x.got, x.want, 0.03)), shape);
+    p.currentTime(5500 - 80);
+    await sleep(80);
+    const half = e.gain.gain.value / G;
+    check('cut: halfway through the fade is about -6 dB', near(db(half), -6, 0.6), db(half));
     p.currentTime(5500);
     await sleep(60);
-    const midDb = db(e.gain.gain.value / G);
-    check('cut: halfway through the fade is about -30 dB', midDb < -24 && midDb > -36, midDb);
 
     // runs out -> stopped, as a natural end, reported at the file end, seek bar length restored
     let stopped = waitFor(p, 'stopped', 3000);
@@ -117,7 +129,7 @@ document.getElementById('run').addEventListener('click', async () => {
     check('fade + Repeat One: seek bar back to the file length', o.mediaSource.RunTimeTicks === TICKS_3S && near(p.duration(), 3000, 1));
     check('fade + Repeat One: position on the file timeline', p.currentTime() >= 1000 && p.currentTime() < 3000, p.currentTime());
     await sleep(700);
-    check('fade + Repeat One: ramped back up', faded < 0.2 && near(e.gain.gain.value, G, 1e-3), [faded, e.gain.gain.value]);
+    check('fade + Repeat One: ramped back up', faded < 0.9 * G && near(e.gain.gain.value, G, 1e-3), [faded, e.gain.gain.value]);
     stopped = waitFor(p, 'stopped', 1500);
     check('fade + Repeat One: keeps looping (no stop)', !(await stopped));
 
@@ -160,6 +172,15 @@ document.getElementById('run').addEventListener('click', async () => {
     await p.play(o);
     check('tail: no play-through, plays once', !e.pt && e.source.loop === false && near(p.duration(), 6000, 1) && o.mediaSource.RunTimeTicks === 2 * TICKS_3S);
     await p.stop(false);
+
+    // --- "loop and fade every loop track": the file with a 3 s outro plays through too, the outro is skipped
+    o = opts('tailall');
+    await p.play(o);
+    check('all loops: track with an outro plays through', !!e.pt && e.source.loop === true && e.pt.end === 192000 && o.mediaSource.RunTimeTicks === 60000000, e.pt);
+    p.currentTime(5700);
+    stopped = waitFor(p, 'stopped', 2000);
+    check('all loops: ends after the fade (the outro never plays)', await stopped);
+    check('all loops: seek bar length restored', o.mediaSource.RunTimeTicks === 2 * TICKS_3S);
 
     // --- per-browser switch
     localStorage.setItem('vgmloop.playthrough', 'off');

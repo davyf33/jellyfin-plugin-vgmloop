@@ -80,6 +80,10 @@ public sealed class LoopInfoDto
     [JsonPropertyName("playthroughFadeSeconds")]
     public double? PlaythroughFadeSeconds { get; set; }
 
+    /// <summary>Gets or sets a value indicating whether play-through applies to tracks with an outro too; absent when off.</summary>
+    [JsonPropertyName("playthroughAllLoops")]
+    public bool? PlaythroughAllLoops { get; set; }
+
     /// <summary>Gets or sets the size-mtime version string.</summary>
     [JsonPropertyName("version")]
     public string Version { get; set; } = string.Empty;
@@ -115,6 +119,7 @@ public sealed class LoopInfoDto
             Reason = l.Reason,
             PlaythroughLoops = config.EnablePlaythrough ? Math.Clamp(config.PlaythroughLoops, 1, 5) : null,
             PlaythroughFadeSeconds = config.EnablePlaythrough ? Math.Clamp(config.PlaythroughFadeSeconds, 0, 30) : null,
+            PlaythroughAllLoops = config.EnablePlaythrough && config.PlaythroughAllLoops ? true : null,
             FileSize = info.FileSize,
             Version = info.Version
         };

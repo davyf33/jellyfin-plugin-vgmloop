@@ -53,6 +53,17 @@ public class PluginConfiguration : BasePluginConfiguration
     public double PlaythroughFadeSeconds { get; set; } = 10;
 
     /// <summary>
+    /// Gets or sets a value indicating whether play-through applies to every loop track, not only cut rips: tracks with
+    /// an outro after the loop also loop N times and fade instead of playing their outro.
+    /// </summary>
+    public bool PlaythroughAllLoops { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether album pages get Play and Shuffle buttons on each "Disc N" header.
+    /// </summary>
+    public bool EnableDiscButtons { get; set; } = true;
+
+    /// <summary>
     /// Reads an album tag field's on/off setting by property name.
     /// </summary>
     /// <param name="setting">The property name, e.g. <c>nameof(EnablePlatformTags)</c>.</param>

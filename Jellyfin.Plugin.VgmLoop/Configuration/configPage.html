@@ -35,11 +35,29 @@
                     </div>
                     <div class="checkboxContainer checkboxContainer-withDescription">
                         <label class="emby-checkbox-label">
+                            <input id="PlaythroughAllLoops" name="PlaythroughAllLoops" type="checkbox" is="emby-checkbox" />
+                            <span>Loop and fade every loop track, not only cut rips</span>
+                        </label>
+                        <div class="fieldDescription checkboxFieldDescription">
+                            Tracks with an outro or their own ending after the loop also play the loop the number of times above and fade out, instead of playing their outro.
+                        </div>
+                    </div>
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label class="emby-checkbox-label">
                             <input id="EnableDiscNames" name="EnableDiscNames" type="checkbox" is="emby-checkbox" />
                             <span>Show disc names on album pages</span>
                         </label>
                         <div class="fieldDescription checkboxFieldDescription">
                             Adds the disc name from the files' tags (DISCSUBTITLE, or TSST in MP3) next to "Disc 2" etc. Needs the player above to be enabled.
+                        </div>
+                    </div>
+                    <div class="checkboxContainer checkboxContainer-withDescription">
+                        <label class="emby-checkbox-label">
+                            <input id="EnableDiscButtons" name="EnableDiscButtons" type="checkbox" is="emby-checkbox" />
+                            <span>Show Play and Shuffle buttons on each disc</span>
+                        </label>
+                        <div class="fieldDescription checkboxFieldDescription">
+                            On albums with more than one disc, buttons at the right of each "Disc N" header play or shuffle just that disc. Needs the player above to be enabled.
                         </div>
                     </div>
                     <div class="checkboxContainer checkboxContainer-withDescription">
@@ -99,6 +117,8 @@
                         document.querySelector('#EnablePlaythrough').checked = config.EnablePlaythrough !== false;
                         document.querySelector('#PlaythroughLoops').value = config.PlaythroughLoops || 2;
                         document.querySelector('#PlaythroughFadeSeconds').value = config.PlaythroughFadeSeconds != null ? config.PlaythroughFadeSeconds : 10;
+                        document.querySelector('#PlaythroughAllLoops').checked = config.PlaythroughAllLoops === true;
+                        document.querySelector('#EnableDiscButtons').checked = config.EnableDiscButtons !== false;
                         document.querySelector('#EnableDiscNames').checked = config.EnableDiscNames !== false;
                         document.querySelector('#EnableLoopIcons').checked = config.EnableLoopIcons !== false;
                         document.querySelector('#EnablePlatformTags').checked = config.EnablePlatformTags !== false;
@@ -117,6 +137,8 @@
                         config.PlaythroughLoops = Math.min(5, Math.max(1, parseInt(document.querySelector('#PlaythroughLoops').value, 10) || 2));
                         var fade = parseFloat(document.querySelector('#PlaythroughFadeSeconds').value);
                         config.PlaythroughFadeSeconds = Math.min(30, Math.max(0, isNaN(fade) ? 10 : fade));
+                        config.PlaythroughAllLoops = document.querySelector('#PlaythroughAllLoops').checked;
+                        config.EnableDiscButtons = document.querySelector('#EnableDiscButtons').checked;
                         config.EnableDiscNames = document.querySelector('#EnableDiscNames').checked;
                         config.EnableLoopIcons = document.querySelector('#EnableLoopIcons').checked;
                         config.EnablePlatformTags = document.querySelector('#EnablePlatformTags').checked;

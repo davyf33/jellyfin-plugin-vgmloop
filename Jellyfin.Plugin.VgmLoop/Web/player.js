@@ -137,13 +137,10 @@
         return { anchor: { ctxTime0: now, pos0: pos, looping }, crossed };
     }
 
-    // ---- play-through ("loop N times, then fade") for cut rips outside Repeat One
+    // ---- play-through ("loop N times, then fade") outside Repeat One: cut rips, or every loop track if set
 
     /** Most audio after loopEnd for a file to count as a cut rip (one that stops dead at the loop end). */
     const CUT_RIP_TAIL_SECONDS = 2;
-
-    /** Fade floor, relative to the current volume: -60 dB. */
-    const FADE_FLOOR = 0.001;
 
     /** True when the file ends (almost) at loopEnd, so playing it once would stop mid-phrase. */
     function isCutRip(total, loopEnd, rate) {
@@ -152,18 +149,19 @@
 
     /**
      * Play-through settings from LoopInfo, or null when off. `localOff` is the per-browser switch
-     * (?vgmloop=playthrough-off). Loops are clamped to 1-5 and the fade to 0-30 s.
+     * (?vgmloop=playthrough-off). Loops are clamped to 1-5 and the fade to 0-30 s. `all` means every loop track
+     * plays through, outros included; otherwise only cut rips do.
      */
     function playthroughSettings(info, localOff) {
         if (localOff || !info || !(info.playthroughLoops >= 1)) return null;
         const loops = Math.min(5, Math.max(1, Math.round(info.playthroughLoops)));
         const fade = Math.min(30, Math.max(0, Number(info.playthroughFadeSeconds) || 0));
-        return { loops, fade };
+        return { loops, fade, all: info.playthroughAllLoops === true };
     }
 
-    /** True when a track should play through: not Repeat One, a cut rip, and play-through on. */
+    /** True when a track should play through: not Repeat One, play-through on, and a cut rip (or any loop with `all`). */
     function playthroughApplies(repeatMode, settings, total, loopStart, loopEnd, rate) {
-        return !!settings && repeatMode !== 'RepeatOne' && loopEnd > loopStart && isCutRip(total, loopEnd, rate);
+        return !!settings && repeatMode !== 'RepeatOne' && loopEnd > loopStart && (settings.all || isCutRip(total, loopEnd, rate));
     }
 
     /**
@@ -181,11 +179,14 @@
         return loopStart + ((v - loopStart) % (loopEnd - loopStart));
     }
 
-    /** Fade factor (1 -> FADE_FLOOR, dB-linear) at timeline position v; 0 once the track has ended. */
+    /**
+     * Fade factor at timeline position v: 1 before the fade, falling linearly in amplitude to 0 at the end (the
+     * vgmstream fade; halfway is -6 dB, so it stays audible almost to the end), 0 once the track has ended.
+     */
     function fadeFactorAt(v, timeline) {
         if (v < timeline.fadeStart) return 1;
         if (v >= timeline.end) return 0;
-        return Math.pow(FADE_FLOOR, (v - timeline.fadeStart) / (timeline.end - timeline.fadeStart));
+        return 1 - (v - timeline.fadeStart) / (timeline.end - timeline.fadeStart);
     }
 
     /**
@@ -356,6 +357,30 @@
         return Promise.all(Array.from({ length: Math.min(limit, jobs.length) }, worker));
     }
 
+    /**
+     * Track ids per disc from an album list in document order: `nodes` are { header: true } for a "Disc N" header and
+     * { id, audio } for a track row. Returns one array per header, in header order; rows before the first header and
+     * non-audio rows are left out.
+     */
+    function discGroups(nodes) {
+        const groups = [];
+        for (const n of nodes || []) {
+            if (n && n.header) groups.push([]);
+            else if (n && n.id && n.audio !== false && groups.length) groups[groups.length - 1].push(n.id);
+        }
+        return groups;
+    }
+
+    /** A shuffled copy (Fisher-Yates); `random` returns [0, 1) like Math.random. */
+    function shuffleList(list, random = Math.random) {
+        const out = list.slice();
+        for (let i = out.length - 1; i > 0; i--) {
+            const j = Math.floor(random() * (i + 1));
+            [out[i], out[j]] = [out[j], out[i]];
+        }
+        return out;
+    }
+
     /** The set of normalized ids in a POST /VgmLoop/LoopStatus response. */
     function loopingIds(response) {
         const ids = response && Array.isArray(response.loopItemIds) ? response.loopItemIds : [];
@@ -393,6 +418,8 @@
         discNameSuffix,
         chunk,
         runLimited,
+        discGroups,
+        shuffleList,
         isCutRip,
         playthroughSettings,
         playthroughApplies,
@@ -1089,7 +1116,7 @@
 
         /**
          * Sets the gain for the current volume, mute and normalization. During play-through it also schedules the
-         * fade (dB-linear, exponentialRampToValueAtTime down to -60 dB) from the current timeline position, so volume
+         * fade (linear in amplitude, linearRampToValueAtTime down to 0) from the current timeline position, so volume
          * changes, seeks and pauses keep it in step. `rampSeconds` eases into the new level instead of jumping.
          */
         _applyGain(rampSeconds, fromLevel) {
@@ -1117,7 +1144,7 @@
             const tEnd = now + (pt.end - v) / rate;
             if (pt.end > pt.fadeStart) {
                 if (v < pt.fadeStart) p.setValueAtTime(g, now + (pt.fadeStart - v) / rate);
-                p.exponentialRampToValueAtTime(g * FADE_FLOOR, tEnd);
+                p.linearRampToValueAtTime(0, tEnd);
             }
             // Silent from the exact end on: the timer that stops the track can be up to 250 ms late.
             p.setValueAtTime(0, tEnd);
@@ -1463,7 +1490,88 @@
             const span = root.document.createElement('span');
             span.className = 'vgmloop-discName';
             span.textContent = discNameSuffix(name);
-            header.appendChild(span);
+            (header.querySelector('.vgmloop-discLabel') || header).appendChild(span);
+        }
+
+        const DISC_FETCH_CHUNK = 100; // ids per Items request (URL length)
+
+        function translate(key, fallback) {
+            try {
+                const text = deps.globalize && deps.globalize.translate(key);
+                return text && text !== key ? text : fallback;
+            } catch {
+                return fallback;
+            }
+        }
+
+        /** The track rows under each header of `list`, read from the DOM at click time (the list may have changed). */
+        function discRows(list, header) {
+            const nodes = Array.from(list.querySelectorAll('h2.listGroupHeader, .listItem[data-id]'));
+            const headers = nodes.filter((n) => n.matches('h2.listGroupHeader'));
+            const groups = discGroups(nodes.map((n) => (n.matches('h2.listGroupHeader')
+                ? { header: true }
+                : { id: n.getAttribute('data-id'), audio: n.getAttribute('data-type') === 'Audio', row: n })));
+            const i = headers.indexOf(header);
+            return i >= 0 ? groups[i] : [];
+        }
+
+        /**
+         * Plays (or shuffles) one disc. The tracks are fetched here in chunks and handed to playbackManager.play as
+         * items: given only ids, jellyfin-web fetches at most 300, which would cut long discs short.
+         */
+        async function playDisc(list, header, shuffle) {
+            const ids = discRows(list, header);
+            if (!ids.length) return;
+            const row = list.querySelector('.listItem[data-id="' + ids[0] + '"]');
+            const serverId = row && row.getAttribute('data-serverid');
+            const apiClient = row ? apiClientFor(row) : deps.ServerConnections.currentApiClient();
+            if (!apiClient || !deps.playbackManager) return;
+            const byId = new Map();
+            for (const part of chunk(ids, DISC_FETCH_CHUNK)) {
+                const r = await apiClient.getItems(apiClient.getCurrentUserId(), {
+                    Ids: part.join(','),
+                    Fields: 'MediaSources,Chapters',
+                    EnableTotalRecordCount: false
+                });
+                for (const item of (r && r.Items) || []) byId.set(normalizeItemId(item.Id), item);
+            }
+            const items = ids.map((id) => byId.get(normalizeItemId(id))).filter((x) => x);
+            if (!items.length) return;
+            await deps.playbackManager.play({ items: shuffle ? shuffleList(items) : items, serverId: serverId || items[0].ServerId });
+        }
+
+        function addDiscButtons(list, header) {
+            if (!header.isConnected || header.querySelector('.vgmloop-discButtons')) return;
+            // Keep "Disc N - name" together on the left, buttons pushed to the right edge.
+            const label = root.document.createElement('span');
+            label.className = 'vgmloop-discLabel';
+            while (header.firstChild) label.appendChild(header.firstChild);
+            header.appendChild(label);
+            header.style.display = 'flex';
+            header.style.alignItems = 'center';
+            const box = root.document.createElement('span');
+            box.className = 'vgmloop-discButtons';
+            box.style.marginLeft = 'auto';
+            box.style.display = 'inline-flex';
+            box.style.flexShrink = '0';
+            const button = (cls, icon, title, shuffle) => {
+                const b = root.document.createElement('button', { is: 'paper-icon-button-light' });
+                b.setAttribute('is', 'paper-icon-button-light');
+                b.type = 'button';
+                b.className = 'paper-icon-button-light ' + cls;
+                b.title = title;
+                b.setAttribute('aria-label', title);
+                b.innerHTML = '<span class="material-icons ' + icon + '" aria-hidden="true"></span>';
+                b.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    playDisc(list, header, shuffle).catch((err) => console.warn(TAG, 'disc playback failed:', err));
+                });
+                return b;
+            };
+            box.appendChild(button('vgmloop-discPlay', 'play_arrow', translate('Play', 'Play'), false));
+            box.appendChild(button('vgmloop-discShuffle', 'shuffle', translate('Shuffle', 'Shuffle'), true));
+            header.appendChild(box);
         }
 
         function addLoopIcon(track) {
@@ -1495,6 +1603,7 @@
                 discNamesForHeaders(ids, r).forEach((name, i) => {
                     if (name) labelDisc(headers[i], name);
                 });
+                if (r.discButtons) headers.forEach((h, i) => { if (tracks[i]) addDiscButtons(list, h); });
             });
         }
 
