@@ -10,7 +10,8 @@ const RATE = 32000;
 const LS = 197319;
 const LE = 2349639;
 const LEN = LE - LS;
-const ON = { loops: 2, fade: 10 };
+const ON = { loops: 2, fade: 10, all: false };
+const ALL = { loops: 2, fade: 10, all: true };
 
 test('cut rip: less than 2 s after the loop end', () => {
     assert.equal(pt.isCutRip(LE, LE, RATE), true); // ends exactly at loopEnd
@@ -20,9 +21,10 @@ test('cut rip: less than 2 s after the loop end', () => {
 });
 
 test('settings come from LoopInfo, clamped; the per-browser switch wins', () => {
-    assert.deepEqual(pt.playthroughSettings({ playthroughLoops: 2, playthroughFadeSeconds: 10 }, false), { loops: 2, fade: 10 });
-    assert.deepEqual(pt.playthroughSettings({ playthroughLoops: 9, playthroughFadeSeconds: 99 }, false), { loops: 5, fade: 30 });
-    assert.deepEqual(pt.playthroughSettings({ playthroughLoops: 1, playthroughFadeSeconds: -3 }, false), { loops: 1, fade: 0 });
+    assert.deepEqual(pt.playthroughSettings({ playthroughLoops: 2, playthroughFadeSeconds: 10 }, false), { loops: 2, fade: 10, all: false });
+    assert.deepEqual(pt.playthroughSettings({ playthroughLoops: 9, playthroughFadeSeconds: 99 }, false), { loops: 5, fade: 30, all: false });
+    assert.deepEqual(pt.playthroughSettings({ playthroughLoops: 1, playthroughFadeSeconds: -3 }, false), { loops: 1, fade: 0, all: false });
+    assert.deepEqual(pt.playthroughSettings({ playthroughLoops: 2, playthroughFadeSeconds: 10, playthroughAllLoops: true }, false), { loops: 2, fade: 10, all: true });
     assert.equal(pt.playthroughSettings({ playthroughLoops: 2, playthroughFadeSeconds: 10 }, true), null);
     assert.equal(pt.playthroughSettings({ hasLoop: true }, false), null); // server has it off (fields absent)
     assert.equal(pt.playthroughSettings(null, false), null);
@@ -34,6 +36,13 @@ test('applies outside Repeat One to cut rips only', () => {
     assert.equal(pt.playthroughApplies('RepeatOne', ON, LE, LS, LE, RATE), false);
     assert.equal(pt.playthroughApplies('RepeatNone', null, LE, LS, LE, RATE), false);
     assert.equal(pt.playthroughApplies('RepeatNone', ON, LE + 5 * RATE, LS, LE, RATE), false);
+});
+
+test('"all loop tracks" also plays through tracks with an outro, still never in Repeat One', () => {
+    assert.equal(pt.playthroughApplies('RepeatNone', ALL, LE + 30 * RATE, LS, LE, RATE), true);
+    assert.equal(pt.playthroughApplies('RepeatAll', ALL, LE, LS, LE, RATE), true);
+    assert.equal(pt.playthroughApplies('RepeatOne', ALL, LE + 30 * RATE, LS, LE, RATE), false);
+    assert.equal(pt.playthroughApplies('RepeatNone', ALL, LE, LE, LE, RATE), false); // no loop
 });
 
 test('timeline: intro + N loops + fade', () => {
@@ -51,12 +60,14 @@ test('timeline positions past the first pass map back into the loop', () => {
     assert.equal(pt.timelineToFile(LS + 2 * LEN + 7, LS, LE), LS + 7); // into the fade
 });
 
-test('fade is dB-linear down to -60 dB', () => {
+test('fade is linear in amplitude: halfway is -6 dB, still audible near the end', () => {
     const t = pt.playthroughTimeline(LS, LE, RATE, ON);
+    const at = (f) => pt.fadeFactorAt(t.fadeStart + f * (t.end - t.fadeStart), t);
     assert.equal(pt.fadeFactorAt(t.fadeStart - 1, t), 1);
-    assert.equal(pt.fadeFactorAt(t.fadeStart, t), 1);
-    const mid = pt.fadeFactorAt((t.fadeStart + t.end) / 2, t);
-    assert.ok(Math.abs(20 * Math.log10(mid) + 30) < 1e-9, String(mid)); // halfway = -30 dB
+    assert.equal(at(0), 1);
+    assert.ok(Math.abs(at(0.5) - 0.5) < 1e-9); // -6 dB
+    assert.ok(20 * Math.log10(at(0.9)) > -21); // last second of a 10 s fade is still around -20 dB
+    assert.ok(Math.abs(at(0.25) - 0.75) < 1e-9);
     assert.equal(pt.fadeFactorAt(t.end, t), 0);
 });
 

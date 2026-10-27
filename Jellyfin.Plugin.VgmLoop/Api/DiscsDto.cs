@@ -19,18 +19,24 @@ public sealed class DiscsDto
     [JsonPropertyName("discs")]
     public IReadOnlyList<DiscDto> Discs { get; set; } = [];
 
+    /// <summary>Gets or sets a value indicating whether the page should add Play and Shuffle buttons to disc headers.</summary>
+    [JsonPropertyName("discButtons")]
+    public bool DiscButtons { get; set; }
+
     /// <summary>
     /// Builds the DTO.
     /// </summary>
     /// <param name="albumId">Album id.</param>
     /// <param name="discs">Named discs.</param>
+    /// <param name="discButtons">Whether disc headers get Play and Shuffle buttons.</param>
     /// <returns>The DTO.</returns>
-    public static DiscsDto From(Guid albumId, IEnumerable<DiscName> discs)
+    public static DiscsDto From(Guid albumId, IEnumerable<DiscName> discs, bool discButtons)
     {
         ArgumentNullException.ThrowIfNull(discs);
         return new DiscsDto
         {
             AlbumId = albumId.ToString("N"),
+            DiscButtons = discButtons,
             Discs = discs.Select(d => new DiscDto
             {
                 DiscNumber = d.DiscNumber,

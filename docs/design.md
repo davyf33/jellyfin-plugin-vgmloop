@@ -55,7 +55,8 @@ field's tags and record are left as they are. Albums with the Tags field locked 
   discs, `[{ discNumber, name, itemIds }]`. Names come from `DISCSUBTITLE` (Vorbis comments, MP4 freeform, ID3
   `TXXX`), ID3 `TSST`, or a few other spellings, read through `TagService`. For each disc it reads up to three
   tracks and uses the first name it finds; the first track of every disc is read in parallel up front. With "Show
-  disc names" off, the list is empty.
+  disc names" off, the list is empty. `discButtons` says whether the page adds Play / Shuffle buttons to the headers
+  (the "Show Play and Shuffle buttons" setting).
 - `POST /VgmLoop/LoopStatus` (authorized), body `{ itemIds: [...] }` (up to 500): `{ loopItemIds }`, the
   requested tracks the caller can see that have a playable loop. The tracks are looked up in one query and the files
   read 8 at a time, since on a network share each file costs a round trip or two. That query doesn't enforce library
@@ -91,10 +92,14 @@ the track play out; entering it starts looping unless the playhead is already pa
 **Play-through.** A cut rip is a loop track with less than 2 s of audio after `loopEnd` (`isCutRip`). Outside Repeat
 One it plays on a longer timeline instead of stopping dead: intro, N passes of the loop, then F seconds of fading while
 still looping (`playthroughTimeline`; N and F come from the plugin settings via LoopInfo's `playthroughLoops` and
-`playthroughFadeSeconds`, which are absent when it is off; `?vgmloop=playthrough-off` turns it off per browser). The
+`playthroughFadeSeconds`, which are absent when it is off; `?vgmloop=playthrough-off` turns it off per browser). With
+"Loop and fade every loop track" (`playthroughAllLoops`), tracks with an outro play through the same way and the outro
+is never reached. The
 source keeps looping. A timeline position maps back to the file with the loop-wrap formula (`timelineToFile`), and the
-anchor carries the timeline position `v0` next to the file position. The fade is a dB-linear
-`exponentialRampToValueAtTime` on the GainNode down to -60 dB relative to the current volume. `_applyGain` schedules it
+anchor carries the timeline position `v0` next to the file position. The fade is linear in amplitude
+(`linearRampToValueAtTime` on the GainNode down to 0, as vgmstream fades): halfway is -6 dB, and the last second of a
+10 s fade is still around -20 dB. A dB-linear ramp to -60 dB was tried first and spent most of the fade near silence.
+`_applyGain` schedules it
 from the current timeline position, so volume changes, mute, seeks and pauses stay in step. The 250 ms timer ends the
 track once the timeline passes its end, which counts as a natural end (the queue advances). Because jellyfin-web sizes
 the seek bar from the media source's `RunTimeTicks`, the engine sets that to the play-through length while it runs and
@@ -136,6 +141,12 @@ there:
   once per album, keyed by the first track under a header because the header text is localized, and appends
   ` - name` in a `span.vgmloop-discName`. jellyfin-web only shows disc headers when an album has more than one disc (or
   starts above disc 1), so a single-disc album shows no name.
+- Disc buttons. When the Discs answer has `discButtons`, each header's text moves into `span.vgmloop-discLabel` and
+  `span.vgmloop-discButtons` (jellyfin-web's `paper-icon-button-light` buttons with the `play_arrow` and `shuffle`
+  Material icons) goes at the right edge (the header becomes a flex row). A click reads the rows under that header
+  from the DOM (`discGroups`), fetches them as full items in chunks of 100 and calls `playbackManager.play({ items })`,
+  shuffled first for Shuffle (`shuffleList`). Passing items matters: given only ids, jellyfin-web fetches at most 300,
+  which would cut a long disc short.
 - Loop icon. New `.listItem[data-type="Audio"]` rows go to LoopStatus in batches of 100, in list order and up to 3
   at a time, so a long album fills in from the top. Rows that loop get an inline SVG (`span.vgmloop-loopIcon`) after
   the title. Answers are cached per track, so a redraw makes no request; a failed request isn't cached, so the next

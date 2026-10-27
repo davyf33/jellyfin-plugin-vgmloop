@@ -62,8 +62,14 @@ const results = await tab.evaluate(async ({ SERVER, token, user, AUTH, library }
         getUrl: (path, params) => SERVER + '/' + path + (params ? '?' + new URLSearchParams(params) : ''),
         getJSON: (url) => authFetch(url).then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }),
         ajax: (o) => authFetch(o.url, { method: o.type, headers: { 'Content-Type': o.contentType }, body: o.data })
-            .then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return o.dataType === 'json' ? r.json() : r; })
+            .then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return o.dataType === 'json' ? r.json() : r; }),
+        getItems: (userId, q) => {
+            itemRequests++;
+            return apiClient.getJSON(apiClient.getUrl('Items', { ...q, userId }));
+        }
     };
+    let itemRequests = 0;
+    const plays = [];
     const listeners = new Map();
     const events = {
         on(o, n, f) { if (!listeners.has(o)) listeners.set(o, []); listeners.get(o).push({ n, f }); },
@@ -77,7 +83,8 @@ const results = await tab.evaluate(async ({ SERVER, token, user, AUTH, library }
         appSettings: { get: (k) => store.get(k) ?? null, set: (k, v) => store.set(k, v) },
         appHost: { supports: () => false, getDeviceProfile: () => Promise.resolve({}) },
         ServerConnections: { currentApiClient: () => apiClient, getApiClient: () => apiClient },
-        playbackManager: { getRepeatMode: () => repeatMode },
+        playbackManager: { getRepeatMode: () => repeatMode, play: async (o) => { plays.push(o); } },
+        globalize: { translate: (k) => ({ Play: 'Play', Shuffle: 'Shuffle' })[k] || k },
         loading: { show() {}, hide() {} }
     };
     const waitFor = (p, name, ms) => new Promise((resolve) => {
@@ -195,9 +202,55 @@ const results = await tab.evaluate(async ({ SERVER, token, user, AUTH, library }
     render(big);
     const redraw = await until(() => document.querySelectorAll('.vgmloop-loopIcon').length === 475 && document.querySelectorAll('.vgmloop-discName').length === 10, 5000);
     check('Big Album redraw: icons and names back from the page cache', redraw < 500, redraw);
+
+    // --- disc Play / Shuffle buttons
+    const waitPlays = async (n) => { await until(() => plays.length >= n, 10000); return plays[n - 1]; };
+    const ids = (items) => items.map((i) => i.Id);
+    render(library['Cut Album']);
+    await until(() => list.querySelectorAll('.vgmloop-discButtons').length === 2 && list.querySelectorAll('.vgmloop-discName').length === 2, 5000);
+    const headers = [...list.querySelectorAll('h2.listGroupHeader')];
+    check('buttons: one Play + one Shuffle on each disc header', headers.every((h) => h.querySelector('.vgmloop-discPlay') && h.querySelector('.vgmloop-discShuffle')));
+    check('buttons: header text unchanged ("Disc 1 - Town Music")', headers.map((h) => h.textContent).join('|') === 'Disc 1 - Town Music|Disc 2 - Hourly Music', headers.map((h) => h.textContent));
+    const hr = headers[0].getBoundingClientRect(), br = headers[0].querySelector('.vgmloop-discButtons').getBoundingClientRect(),
+        lr = headers[0].querySelector('.vgmloop-discLabel').getBoundingClientRect();
+    check('buttons: on the same line as the name, at the right edge', near(br.right, hr.right, 2) && lr.left <= hr.left + 2 && br.top < lr.bottom && br.bottom > lr.top,
+        { header: [hr.left, hr.right], label: [lr.left, lr.right], buttons: [br.left, br.right] });
+    headers[1].querySelector('.vgmloop-discPlay').click();
+    let call = await waitPlays(1);
+    const disc2 = library['Cut Album'].filter((t) => t.ParentIndexNumber === 2).map((t) => t.Id);
+    check('Play on disc 2: exactly disc 2, in order, as full items', call && JSON.stringify(ids(call.items)) === JSON.stringify(disc2) && call.serverId === 's1'
+        && call.items.every((i) => i.MediaSources && i.MediaSources.length), call && ids(call.items));
+
+    const bigDisc3 = big.filter((t) => t.ParentIndexNumber === 3).map((t) => t.Id);
+    render(big);
+    await until(() => list.querySelectorAll('.vgmloop-discButtons').length === 10, 5000);
+    list.querySelectorAll('h2.listGroupHeader')[2].querySelector('.vgmloop-discShuffle').click();
+    call = await waitPlays(2);
+    const got = call ? ids(call.items) : [];
+    check('Shuffle on disc 3: the same 95 tracks, shuffled', got.length === 95 && JSON.stringify([...got].sort()) === JSON.stringify([...bigDisc3].sort())
+        && JSON.stringify(got) !== JSON.stringify(bigDisc3), got.length);
+
+    // One header over all 950 tracks: more than jellyfin-web's 300-item cap when it fetches ids itself.
+    list.innerHTML = '<h2 class="listGroupHeader listGroupHeader-first">Disc 1</h2><div>' + big.map(item).join('');
+    await until(() => list.querySelector('.vgmloop-discButtons'), 5000);
+    itemRequests = 0;
+    list.querySelector('.vgmloop-discPlay').click();
+    call = await waitPlays(3);
+    check('Play on a 950-track disc: all 950, in order (fetched in chunks of 100)', call && call.items.length === 950
+        && JSON.stringify(ids(call.items)) === JSON.stringify(big.map((t) => t.Id)) && itemRequests === 10, { n: call && call.items.length, itemRequests });
+
+    // For a look at the layout: icon glyphs stand in for jellyfin-web's Material Icons font.
+    const style = document.createElement('style');
+    style.textContent = 'body{background:#101010;color:#fff;font-family:sans-serif;width:640px;padding:12px}h2.listGroupHeader{font-weight:500;font-size:1.3em}'
+        + '.paper-icon-button-light{background:none;border:0;color:inherit;font-size:1.2em;padding:.3em .4em;cursor:pointer}'
+        + '.material-icons.play_arrow::before{content:"\\25B6"}.material-icons.shuffle::before{content:"\\21C4"}.listItem{padding:.4em 0;border-bottom:1px solid #222}';
+    document.head.appendChild(style);
+    render(library['Cut Album']);
+    await until(() => list.querySelectorAll('.vgmloop-discButtons').length === 2, 5000);
     return results;
 }, { SERVER, token, user, AUTH, library });
 
+if (process.env.SCREENSHOT) await tab.screenshot({ path: process.env.SCREENSHOT, fullPage: true });
 await api(`/Plugins/${PLUGIN}/Configuration`, { method: 'POST', token, body: cfg });
 await browser.close();
 http.close();

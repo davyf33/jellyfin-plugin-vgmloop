@@ -70,3 +70,25 @@ test('runLimited starts jobs in order, caps concurrency, survives failures', asy
     assert.deepEqual(started, [1, 2, 3, 4, 5, 6, 7]);
     assert.equal(peak, 3);
 });
+
+const { discGroups, shuffleList } = require('../../Jellyfin.Plugin.VgmLoop/Web/player.js');
+
+test('discGroups: rows belong to the header above them', () => {
+    const H = { header: true };
+    const r = (id, audio = true) => ({ id, audio });
+    assert.deepEqual(discGroups([r('x'), H, r('a'), r('b'), H, r('c'), r('v', false), H]), [['a', 'b'], ['c'], []]);
+    assert.deepEqual(discGroups([]), []);
+    assert.deepEqual(discGroups(null), []);
+});
+
+test('shuffleList: a permutation, input untouched, uses the given random source', () => {
+    const list = Array.from({ length: 50 }, (_, i) => i);
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    const out = shuffleList(list, rnd);
+    assert.deepEqual([...out].sort((a, b) => a - b), list);
+    assert.notDeepEqual(out, list);
+    assert.deepEqual(list, Array.from({ length: 50 }, (_, i) => i));
+    assert.deepEqual(shuffleList([]), []);
+    assert.deepEqual(shuffleList(['only']), ['only']);
+});

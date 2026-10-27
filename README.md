@@ -13,9 +13,11 @@ Requires Jellyfin **12.2** (for 12.1, install VGM Loop 1.0). Works in the web cl
 - Repeat off / Repeat all: the track plays once, start to finish, and the queue moves on. The exception is a cut rip, a
   loop track that stops right at the loop end (less than 2 s of audio after it). Played once, it would cut off
   mid-phrase, so instead it plays the intro, the loop twice, then fades out over 10 s while still looping, the way game
-  OSTs end their tracks. Then the queue moves on. The seek bar shows that whole length, and the track counts as played
-  once the fade ends. Files with a real ending or their own fade after the loop play as before. Set the loop count
-  (1-5) and fade length (0-30 s), or turn this off, in the plugin settings.
+  OSTs end their tracks. The fade lowers the volume in a straight line (like vgmstream), so it stays audible until
+  close to the end. Then the queue moves on. The seek bar shows that whole length, and the track counts as played
+  once the fade ends. Files with a real ending or their own fade after the loop play as before, unless you turn on
+  **Loop and fade every loop track**: then they loop and fade too, skipping their outro. Set the loop count (1-5) and
+  fade length (0-30 s), or turn this off, in the plugin settings.
 - **Next** always skips to the next track, even in Repeat One (which stays on, so the next track loops too). At the end
   of the queue it wraps to the first track. When a track ends by itself in Repeat One it repeats, as before.
 - The repeat mode you pick for music sticks: starting another track or album keeps it (stock jellyfin-web resets it
@@ -40,6 +42,10 @@ The plugin reads `DISCSUBTITLE` (FLAC, Ogg, M4A, and MP3 `TXXX`; this is what Mu
 (the ID3v2.4 "set subtitle" frame in MP3). `SETSUBTITLE`, `DISCNAME` and `DISCTITLE` also work. The plugin only reads
 the tags and doesn't modify your files. To turn it off, go to Dashboard → Plugins → VGM Loop and uncheck **Show disc
 names on album pages**.
+
+Each disc header also gets **Play** and **Shuffle** buttons at its right end. Play starts that disc from its first
+track; Shuffle plays just that disc's tracks in random order. Uncheck **Show Play and Shuffle buttons on each disc** to
+hide them.
 
 ## Album tags: platform, release category, series
 
