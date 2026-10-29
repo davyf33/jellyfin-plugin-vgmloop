@@ -875,8 +875,14 @@
         console.info(TAG, pendingNotice);
     })();
 
-    function outputMode() {
-        return readSetting(SETTINGS.output) === 'stream' ? 'stream' : 'direct';
+    /**
+     * Loop-engine output: the per-browser switch (?vgmloop=stream / direct) wins; otherwise, on iPhone and iPad, the
+     * server's "Loop output on iPhone and iPad" setting (LoopInfo.iosOutput); otherwise direct.
+     */
+    function outputMode(info) {
+        const local = readSetting(SETTINGS.output);
+        if (local === 'stream' || local === 'direct') return local;
+        return browser.iOS && info && info.iosOutput === 'stream' ? 'stream' : 'direct';
     }
 
     /**
@@ -898,8 +904,8 @@
      */
     const contexts = {
         ctx: null,
-        get(rate) {
-            if (this.ctx && this.ctx.state !== 'closed' && this.ctx.sampleRate === rate) return this.ctx;
+        get(rate, mode) {
+            if (this.ctx && this.ctx.state !== 'closed' && this.ctx.sampleRate === rate && this.requested === mode) return this.ctx;
             this.close();
             setAudioSessionPlayback();
             const ctx = new AudioContextClass({ sampleRate: rate, latencyHint: 'playback' });
@@ -908,7 +914,8 @@
                 throw new Error('AudioContext sampleRate ' + ctx.sampleRate + ' != ' + rate);
             }
             this.ctx = ctx;
-            this.mode = outputMode();
+            this.requested = mode;
+            this.mode = mode;
             if (this.mode === 'stream' && ctx.createMediaStreamDestination) {
                 // Route through a media element: gives the page a real "playing media" for lock-screen /
                 // Now Playing controls and background playback where Web Audio alone doesn't.
@@ -923,6 +930,7 @@
             return ctx;
         },
         mode: 'direct',
+        requested: null,
         output: null,
         _el: null,
         streamElement() {
@@ -1055,7 +1063,7 @@
                 }
                 const t1 = performance.now();
 
-                const ctx = contexts.get(info.sampleRate);
+                const ctx = contexts.get(info.sampleRate, outputMode(info));
                 if (!buffer) buffer = await ctx.decodeAudioData(bytes);
                 if (gen !== this._gen) return 'aborted';
 
@@ -1540,8 +1548,32 @@
             await deps.playbackManager.play({ items: shuffle ? shuffleList(items) : items, serverId: serverId || items[0].ServerId });
         }
 
+        function escapeAttr(text) {
+            return String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+        }
+
         function addDiscButtons(list, header) {
             if (!header.isConnected || header.querySelector('.vgmloop-discButtons')) return;
+            // Built from markup, the way jellyfin-web builds its own buttons: its Custom Elements v0 polyfill
+            // (webcomponents.js) upgrades parsed <button is="paper-icon-button-light">, but its document.createElement
+            // only takes a string type extension and throws on createElement('button', { is }).
+            const button = (cls, icon, title) => '<button is="paper-icon-button-light" type="button" class="paper-icon-button-light '
+                + cls + '" title="' + escapeAttr(title) + '" aria-label="' + escapeAttr(title) + '">'
+                + '<span class="material-icons ' + icon + '" aria-hidden="true"></span></button>';
+            const box = root.document.createElement('span');
+            box.className = 'vgmloop-discButtons';
+            box.style.marginLeft = 'auto';
+            box.style.display = 'inline-flex';
+            box.style.flexShrink = '0';
+            box.innerHTML = button('vgmloop-discPlay', 'play_arrow', translate('Play', 'Play'))
+                + button('vgmloop-discShuffle', 'shuffle', translate('Shuffle', 'Shuffle'));
+            for (const [cls, shuffle] of [['vgmloop-discPlay', false], ['vgmloop-discShuffle', true]]) {
+                box.querySelector('.' + cls).addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    playDisc(list, header, shuffle).catch((err) => console.warn(TAG, 'disc playback failed:', err));
+                });
+            }
             // Keep "Disc N - name" together on the left, buttons pushed to the right edge.
             const label = root.document.createElement('span');
             label.className = 'vgmloop-discLabel';
@@ -1549,28 +1581,6 @@
             header.appendChild(label);
             header.style.display = 'flex';
             header.style.alignItems = 'center';
-            const box = root.document.createElement('span');
-            box.className = 'vgmloop-discButtons';
-            box.style.marginLeft = 'auto';
-            box.style.display = 'inline-flex';
-            box.style.flexShrink = '0';
-            const button = (cls, icon, title, shuffle) => {
-                const b = root.document.createElement('button', { is: 'paper-icon-button-light' });
-                b.setAttribute('is', 'paper-icon-button-light');
-                b.type = 'button';
-                b.className = 'paper-icon-button-light ' + cls;
-                b.title = title;
-                b.setAttribute('aria-label', title);
-                b.innerHTML = '<span class="material-icons ' + icon + '" aria-hidden="true"></span>';
-                b.addEventListener('click', (e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    playDisc(list, header, shuffle).catch((err) => console.warn(TAG, 'disc playback failed:', err));
-                });
-                return b;
-            };
-            box.appendChild(button('vgmloop-discPlay', 'play_arrow', translate('Play', 'Play'), false));
-            box.appendChild(button('vgmloop-discShuffle', 'shuffle', translate('Shuffle', 'Shuffle'), true));
             header.appendChild(box);
         }
 
@@ -1603,7 +1613,16 @@
                 discNamesForHeaders(ids, r).forEach((name, i) => {
                     if (name) labelDisc(headers[i], name);
                 });
-                if (r.discButtons) headers.forEach((h, i) => { if (tracks[i]) addDiscButtons(list, h); });
+                if (r.discButtons) {
+                    headers.forEach((h, i) => {
+                        if (!tracks[i]) return;
+                        try {
+                            addDiscButtons(list, h);
+                        } catch (e) {
+                            console.warn(TAG, 'disc buttons not added:', e);
+                        }
+                    });
+                }
             });
         }
 

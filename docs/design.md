@@ -143,7 +143,10 @@ there:
   starts above disc 1), so a single-disc album shows no name.
 - Disc buttons. When the Discs answer has `discButtons`, each header's text moves into `span.vgmloop-discLabel` and
   `span.vgmloop-discButtons` (jellyfin-web's `paper-icon-button-light` buttons with the `play_arrow` and `shuffle`
-  Material icons) goes at the right edge (the header becomes a flex row). A click reads the rows under that header
+  Material icons) goes at the right edge (the header becomes a flex row). The buttons are built from markup:
+  jellyfin-web loads the webcomponents.js 0.7 Custom Elements v0 polyfill, whose `document.createElement` only takes a
+  string type extension and throws on `createElement('button', { is })` (that is why 1.2.2 showed no buttons).
+  `tools/e2e/live.mjs` loads that polyfill for this reason. A click reads the rows under that header
   from the DOM (`discGroups`), fetches them as full items in chunks of 100 and calls `playbackManager.play({ items })`,
   shuffled first for Shuffle (`shuffleList`). Passing items matters: given only ids, jellyfin-web fetches at most 300,
   which would cut a long disc short.

@@ -30,6 +30,9 @@ noise). Covered by `tests/js/loop.test.mjs` and `tools/harness/loop.html`.
 | Ringer switch mutes playback | no (correct) | no | – | – | – |
 | Auto-advance 32 kHz → 48 kHz loop track (new AudioContext without a gesture), then loops | yes | yes | yes | yes | yes |
 
-Web Audio straight to `AudioContext.destination`, plus `navigator.audioSession.type = 'playback'`, is enough on iOS.
+Web Audio straight to `AudioContext.destination`, plus `navigator.audioSession.type = 'playback'`, was enough on iOS in
+the 1.0 tests. Since then, lock-screen controls were reported dead on iOS (Safari and the app) while loop tracks kept
+playing in the background. The plugin setting "Loop output on iPhone and iPad" (`IosLoopOutput`, sent as
+LoopInfo `iosOutput`) switches iOS devices to the `stream` output without a URL, which the app needs.
 Routing through a `MediaStreamAudioDestinationNode` and a hidden `<audio>` element remains available as an opt-in
 (`?vgmloop=stream`).

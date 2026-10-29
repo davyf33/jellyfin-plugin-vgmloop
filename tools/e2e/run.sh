@@ -31,5 +31,11 @@ stop_server() { kill "$SERVER" 2>/dev/null || true; wait "$SERVER" 2>/dev/null |
 trap stop_server EXIT
 E2E_IDS="$WORK/ids.json" python3 -I "$ROOT/tools/e2e/e2e.py" "http://localhost:$PORT" "$WORK/music" "$VERSION"
 if [ -n "${LIVE:-}" ]; then
+  # The Custom Elements polyfill jellyfin-web 12.2 loads (package.json: webcomponents.js 0.7.24), as plain data from npm.
+  if [ -z "${WEBCOMPONENTS:-}" ]; then
+    mkdir -p "$WORK/webcomponents"
+    curl -sSfL https://registry.npmjs.org/webcomponents.js/-/webcomponents.js-0.7.24.tgz | tar -xz -C "$WORK/webcomponents"
+    export WEBCOMPONENTS="$WORK/webcomponents/package/webcomponents-lite.js"
+  fi
   node "$ROOT/tools/e2e/live.mjs" "http://localhost:$PORT"
 fi

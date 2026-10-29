@@ -5,7 +5,7 @@
     <title>VGM Loop</title>
 </head>
 <body>
-    <div id="VgmLoopConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-checkbox">
+    <div id="VgmLoopConfigPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-checkbox,emby-select">
         <div data-role="content">
             <div class="content-primary">
                 <form id="VgmLoopConfigForm">
@@ -16,6 +16,15 @@
                         </label>
                         <div class="fieldDescription checkboxFieldDescription">
                             Injects the loop-aware audio player into the web client. After changing this, hard-refresh open browser tabs.
+                        </div>
+                    </div>
+                    <div class="selectContainer">
+                        <select is="emby-select" id="IosLoopOutput" name="IosLoopOutput" label="Loop output on iPhone and iPad">
+                            <option value="direct">Web Audio (default)</option>
+                            <option value="stream">Audio element (try this if lock screen controls don't work)</option>
+                        </select>
+                        <div class="fieldDescription">
+                            How loop tracks are played on iOS, in Safari and the Jellyfin app. "Audio element" routes them through a hidden audio element, which iOS treats as normal media for the lock screen and Control Center. Reload the app or page after changing it.
                         </div>
                     </div>
                     <div class="checkboxContainer checkboxContainer-withDescription">
@@ -119,6 +128,7 @@
                         document.querySelector('#PlaythroughFadeSeconds').value = config.PlaythroughFadeSeconds != null ? config.PlaythroughFadeSeconds : 10;
                         document.querySelector('#PlaythroughAllLoops').checked = config.PlaythroughAllLoops === true;
                         document.querySelector('#EnableDiscButtons').checked = config.EnableDiscButtons !== false;
+                        document.querySelector('#IosLoopOutput').value = config.IosLoopOutput === 'stream' ? 'stream' : 'direct';
                         document.querySelector('#EnableDiscNames').checked = config.EnableDiscNames !== false;
                         document.querySelector('#EnableLoopIcons').checked = config.EnableLoopIcons !== false;
                         document.querySelector('#EnablePlatformTags').checked = config.EnablePlatformTags !== false;
@@ -139,6 +149,7 @@
                         config.PlaythroughFadeSeconds = Math.min(30, Math.max(0, isNaN(fade) ? 10 : fade));
                         config.PlaythroughAllLoops = document.querySelector('#PlaythroughAllLoops').checked;
                         config.EnableDiscButtons = document.querySelector('#EnableDiscButtons').checked;
+                        config.IosLoopOutput = document.querySelector('#IosLoopOutput').value;
                         config.EnableDiscNames = document.querySelector('#EnableDiscNames').checked;
                         config.EnableLoopIcons = document.querySelector('#EnableLoopIcons').checked;
                         config.EnablePlatformTags = document.querySelector('#EnablePlatformTags').checked;

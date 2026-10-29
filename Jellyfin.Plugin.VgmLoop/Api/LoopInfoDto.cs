@@ -84,6 +84,10 @@ public sealed class LoopInfoDto
     [JsonPropertyName("playthroughAllLoops")]
     public bool? PlaythroughAllLoops { get; set; }
 
+    /// <summary>Gets or sets the loop output for iPhone and iPad (<c>stream</c>); absent for the default (direct).</summary>
+    [JsonPropertyName("iosOutput")]
+    public string? IosOutput { get; set; }
+
     /// <summary>Gets or sets the size-mtime version string.</summary>
     [JsonPropertyName("version")]
     public string Version { get; set; } = string.Empty;
@@ -120,6 +124,7 @@ public sealed class LoopInfoDto
             PlaythroughLoops = config.EnablePlaythrough ? Math.Clamp(config.PlaythroughLoops, 1, 5) : null,
             PlaythroughFadeSeconds = config.EnablePlaythrough ? Math.Clamp(config.PlaythroughFadeSeconds, 0, 30) : null,
             PlaythroughAllLoops = config.EnablePlaythrough && config.PlaythroughAllLoops ? true : null,
+            IosOutput = string.Equals(config.IosLoopOutput, "stream", StringComparison.OrdinalIgnoreCase) ? "stream" : null,
             FileSize = info.FileSize,
             Version = info.Version
         };

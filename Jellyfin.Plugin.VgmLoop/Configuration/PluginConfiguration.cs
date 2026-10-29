@@ -64,6 +64,13 @@ public class PluginConfiguration : BasePluginConfiguration
     public bool EnableDiscButtons { get; set; } = true;
 
     /// <summary>
+    /// Gets or sets how loop tracks reach the speakers on iPhone and iPad: <c>direct</c> (Web Audio straight to the
+    /// output) or <c>stream</c> (through a hidden audio element, which iOS treats as playing media for the lock screen
+    /// and Control Center). A browser's own <c>?vgmloop=stream</c> / <c>direct</c> switch overrides it.
+    /// </summary>
+    public string IosLoopOutput { get; set; } = "direct";
+
+    /// <summary>
     /// Reads an album tag field's on/off setting by property name.
     /// </summary>
     /// <param name="setting">The property name, e.g. <c>nameof(EnablePlatformTags)</c>.</param>

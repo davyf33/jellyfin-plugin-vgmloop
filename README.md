@@ -109,6 +109,11 @@ Per-browser switches (work on phones too; open the URL once, the setting sticks 
 | `https://SERVER/web/?vgmloop=prefetch-off` | don't preload the next loop track (e.g. to save mobile data); `prefetch-on` restores it |
 | `https://SERVER/web/?vgmloop=playthrough-off` | play cut rips once, stopping at the loop end, instead of looping and fading; `playthrough-on` restores it |
 
+On iPhone and iPad, if the lock screen or Control Center can't pause or skip loop tracks, set **Loop output on iPhone
+and iPad** to **Audio element** in the plugin settings, then reload the app or page. That routes loop tracks through a
+hidden `<audio>` element, the same as `?vgmloop=stream`, and works in the Jellyfin app, where you can't use the URL
+switches. A browser's own `?vgmloop=stream` or `?vgmloop=direct` overrides the setting.
+
 Differences from the stock audio player: no hls.js, so audio transcodes are delivered as progressive HTTP (aac/mp3/opus) and the
 "always remux FLAC/MP3" settings are ignored for music (the original file is played directly). When audio normalization is
 switched off, the previous track's gain is reset instead of lingering.
