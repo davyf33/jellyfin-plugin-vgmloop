@@ -1,6 +1,6 @@
 # Jellyfin and browser notes
 
-Findings that shaped the implementation (Jellyfin 12.1.0, jellyfin-web 12.1; rechecked against 12.2.0, where the audio player, play queue and index.html are unchanged).
+Findings that shaped the implementation (Jellyfin 12.1.0, jellyfin-web 12.1; rechecked against 12.2.0, where the audio player, play queue and index.html are unchanged; run end to end against 12.4.0).
 
 ## Jellyfin
 
@@ -20,7 +20,7 @@ wrap at the seam (an offline render replayed the last 128 frames; max error 0.08
 `loopEndSeconds()`, the largest double with `s * rate <= loopEnd`, which brings the seam error down to ~1e-12 (float
 noise). Covered by `tests/js/loop.test.mjs` and `tools/harness/loop.html`.
 
-## Device results (default `direct` output)
+## Device results (1.0, Web Audio output only)
 
 | Check | iPhone Safari | Jellyfin iOS app | Safari macOS | Firefox macOS | Chrome macOS |
 |---|---|---|---|---|---|
@@ -30,9 +30,15 @@ noise). Covered by `tests/js/loop.test.mjs` and `tools/harness/loop.html`.
 | Ringer switch mutes playback | no (correct) | no | – | – | – |
 | Auto-advance 32 kHz → 48 kHz loop track (new AudioContext without a gesture), then loops | yes | yes | yes | yes | yes |
 
-Web Audio straight to `AudioContext.destination`, plus `navigator.audioSession.type = 'playback'`, was enough on iOS in
-the 1.0 tests. Since then, lock-screen controls were reported dead on iOS (Safari and the app) while loop tracks kept
-playing in the background. The plugin setting "Loop output on iPhone and iPad" (`IosLoopOutput`, sent as
-LoopInfo `iosOutput`) switches iOS devices to the `stream` output without a URL, which the app needs.
-Routing through a `MediaStreamAudioDestinationNode` and a hidden `<audio>` element remains available as an opt-in
-(`?vgmloop=stream`).
+Web Audio straight to `AudioContext.destination`, plus `navigator.audioSession.type = 'playback'`, keeps loop tracks
+playing in the background on iOS. The lock-screen row above no longer holds: later iOS versions show the title of a
+Web Audio page but no working transport buttons or position, in Safari and the app. Routing Web Audio into an
+`<audio>` element through a `MediaStreamAudioDestinationNode` (the old `?vgmloop=stream`) didn't help either (iOS 27
+simulator: title only, no position). jellyfin-web only sets `mediaSession.metadata` and action handlers, never
+`playbackState` or `setPositionState`, because a media element supplies those itself.
+
+So while a loop track plays, the loop engine also plays a silent, looping, file-backed `<audio>` (a 1 s blob WAV,
+`audio.vgmLoopKeepAlive`), the same kind of element the plain engine uses, and reports `playbackState` and
+`setPositionState` itself. Both are cleared when the track ends, so a following plain track's element takes over. The
+lock-screen buttons still need checking on a real iPhone: the simulator's lock screen never shows them, even for a
+plain `<audio>` file.

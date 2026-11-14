@@ -224,12 +224,6 @@
         return s;
     }
 
-    /** Milliseconds -> integer sample index clamped into [0, total). */
-    function msToSamples(ms, rate, total) {
-        const s = Math.round((ms / 1000) * rate);
-        return Math.max(0, Math.min(total > 0 ? total - 1 : 0, s));
-    }
-
     /**
      * In Repeat One, jellyfin-web's Next replays the current track (the queue's "next item" is the current one).
      * Wraps playbackManager.nextTrack so a user-initiated Next moves on (wrapping at the end of the queue, like
@@ -406,7 +400,6 @@
         positionAt,
         repeatTransition,
         stopReportPosition,
-        msToSamples,
         loopEndSeconds,
         installNextTrackOverride,
         installStickyRepeat,
@@ -457,6 +450,24 @@
             } catch (e) {
                 console.debug(TAG, 'audioSession.type not settable', e);
             }
+        }
+    }
+
+    /**
+     * Now Playing state (lock screen, Control Center). jellyfin-web only sets mediaSession metadata and action handlers;
+     * with an <audio> element the OS reads playing/paused and the position from the element, but Web Audio has no
+     * element, so the loop engine reports them here. null clears them, handing back to the element.
+     */
+    function setNowPlaying(state) {
+        const ms = root.navigator && root.navigator.mediaSession;
+        if (!ms) return;
+        try {
+            ms.playbackState = state ? (state.paused ? 'paused' : 'playing') : 'none';
+            if (ms.setPositionState) {
+                ms.setPositionState(state ? { duration: state.duration, position: Math.min(state.position, state.duration), playbackRate: 1 } : undefined);
+            }
+        } catch (e) {
+            console.debug(TAG, 'mediaSession state not set', e);
         }
     }
 
@@ -831,10 +842,9 @@
 
     // ---- per-browser switches (localStorage), settable from a URL because phones have no console:
     //   /web/?vgmloop=off | on          disable / re-enable the player in this browser
-    //   /web/?vgmloop=stream | direct   loop-engine output via <audio srcObject=MediaStream> | AudioContext.destination
     //   /web/?vgmloop=prefetch-off | prefetch-on   preloading of the next loop track
     //   /web/?vgmloop=playthrough-off | playthrough-on   "loop N times, then fade" for cut rips outside Repeat One
-    const SETTINGS = { disabled: 'vgmloop.disabled', output: 'vgmloop.output', repeat: 'vgmloop.repeatMode', prefetch: 'vgmloop.prefetch', playthrough: 'vgmloop.playthrough' };
+    const SETTINGS = { disabled: 'vgmloop.disabled', repeat: 'vgmloop.repeatMode', prefetch: 'vgmloop.prefetch', playthrough: 'vgmloop.playthrough' };
 
     function readSetting(key) {
         try {
@@ -863,7 +873,6 @@
         }
         if (v === 'off') writeSetting(SETTINGS.disabled, '1');
         else if (v === 'on') writeSetting(SETTINGS.disabled, null);
-        else if (v === 'stream' || v === 'direct') writeSetting(SETTINGS.output, v);
         else if (v === 'prefetch-off') writeSetting(SETTINGS.prefetch, 'off');
         else if (v === 'playthrough-off') writeSetting(SETTINGS.playthrough, 'off');
         else if (v === 'playthrough-on') writeSetting(SETTINGS.playthrough, null);
@@ -871,19 +880,9 @@
         else return;
         pendingNotice = 'VGM Loop: ' + (v === 'off' ? 'disabled in this browser' : v === 'on' ? 'enabled'
             : v.startsWith('prefetch') ? 'preloading ' + v.slice(9)
-                : v.startsWith('playthrough') ? 'play-through ' + v.slice(12) : 'loop output = ' + v);
+                : 'play-through ' + v.slice(12));
         console.info(TAG, pendingNotice);
     })();
-
-    /**
-     * Loop-engine output: the per-browser switch (?vgmloop=stream / direct) wins; otherwise, on iPhone and iPad, the
-     * server's "Loop output on iPhone and iPad" setting (LoopInfo.iosOutput); otherwise direct.
-     */
-    function outputMode(info) {
-        const local = readSetting(SETTINGS.output);
-        if (local === 'stream' || local === 'direct') return local;
-        return browser.iOS && info && info.iosOutput === 'stream' ? 'stream' : 'direct';
-    }
 
     /**
      * Fetches the original file bytes (independent of playMethod: the user may remux or transcode FLAC) and drops
@@ -898,14 +897,31 @@
         return audioDataOffset > 0 ? bytes.slice(audioDataOffset) : bytes;
     }
 
+    /** A 1 s silent 8 kHz mono 8-bit WAV, as a blob URL. */
+    function silentWavUrl() {
+        const n = 8000;
+        const b = new DataView(new ArrayBuffer(44 + n));
+        const text = (o, t) => [...t].forEach((c, i) => b.setUint8(o + i, c.charCodeAt(0)));
+        text(0, 'RIFF'); b.setUint32(4, 36 + n, true); text(8, 'WAVEfmt '); b.setUint32(16, 16, true);
+        b.setUint16(20, 1, true); b.setUint16(22, 1, true); b.setUint32(24, n, true); b.setUint32(28, n, true);
+        b.setUint16(32, 1, true); b.setUint16(34, 8, true); text(36, 'data'); b.setUint32(40, n, true);
+        for (let i = 0; i < n; i++) b.setUint8(44 + i, 128); // 8-bit PCM silence
+        return URL.createObjectURL(new Blob([b], { type: 'audio/wav' }));
+    }
+
     /**
      * One AudioContext at the current loop track's native sample rate. Reused while consecutive loop
      * tracks share a rate; replaced (old one closed) when the rate changes. Safari limits live contexts.
+     *
+     * Next to it, a silent looping <audio> plays while a loop track does: iOS (and Chrome's media controls) only give
+     * lock-screen / Now Playing transport controls to a page with a playing, file-backed media element. Web Audio alone,
+     * or routed into an element through a MediaStream, shows the title with no working buttons.
      */
     const contexts = {
         ctx: null,
-        get(rate, mode) {
-            if (this.ctx && this.ctx.state !== 'closed' && this.ctx.sampleRate === rate && this.requested === mode) return this.ctx;
+        _el: null,
+        get(rate) {
+            if (this.ctx && this.ctx.state !== 'closed' && this.ctx.sampleRate === rate) return this.ctx;
             this.close();
             setAudioSessionPlayback();
             const ctx = new AudioContextClass({ sampleRate: rate, latencyHint: 'playback' });
@@ -914,52 +930,30 @@
                 throw new Error('AudioContext sampleRate ' + ctx.sampleRate + ' != ' + rate);
             }
             this.ctx = ctx;
-            this.requested = mode;
-            this.mode = mode;
-            if (this.mode === 'stream' && ctx.createMediaStreamDestination) {
-                // Route through a media element: gives the page a real "playing media" for lock-screen /
-                // Now Playing controls and background playback where Web Audio alone doesn't.
-                const dest = ctx.createMediaStreamDestination();
-                this.streamElement().srcObject = dest.stream;
-                this.output = dest;
-            } else {
-                this.mode = 'direct';
-                this.output = ctx.destination;
-            }
-            console.debug(TAG, 'AudioContext created at ' + rate + ' Hz, output ' + this.mode);
+            console.debug(TAG, 'AudioContext created at ' + rate + ' Hz');
             return ctx;
         },
-        mode: 'direct',
-        requested: null,
-        output: null,
-        _el: null,
-        streamElement() {
-            // One persistent element: iOS unlocks playback per element, so reusing it lets later tracks
-            // start without a new user gesture.
+        startKeepAlive() {
+            // One persistent element: iOS unlocks playback per element, so later tracks can start it without a gesture.
             if (!this._el) {
                 const el = document.createElement('audio');
-                el.classList.add('vgmLoopStreamAudio', 'hide');
+                el.classList.add('vgmLoopKeepAlive', 'hide');
                 el.setAttribute('playsinline', '');
+                el.loop = true;
+                el.src = silentWavUrl();
                 document.body.appendChild(el);
                 this._el = el;
             }
-            return this._el;
+            // Not fatal: without it loop tracks still play, only the lock-screen buttons are missing.
+            this._el.play().catch((e) => console.warn(TAG, 'Now Playing keep-alive not started:', e && e.name));
         },
-        startOutput() {
-            if (this.mode !== 'stream' || !this._el) return Promise.resolve();
-            return this._el.play();
-        },
-        pauseOutput() {
-            if (this.mode === 'stream' && this._el) this._el.pause();
+        pauseKeepAlive() {
+            if (this._el) this._el.pause();
         },
         close() {
             const c = this.ctx;
             this.ctx = null;
-            this.output = null;
-            if (this._el) {
-                this._el.pause();
-                this._el.srcObject = null;
-            }
+            this.pauseKeepAlive();
             if (c && c.state !== 'closed') c.close().catch(() => {});
         }
     };
@@ -967,8 +961,7 @@
     /**
      * Sample-accurate looping with Web Audio. The original file is fetched and decoded at its
      * native rate; AudioBufferSourceNode.loopStart/loopEnd = n / rate is then exact.
-     * Graph: AudioBufferSourceNode -> GainNode (volume x ReplayGain) -> destination
-     * (or -> MediaStreamAudioDestinationNode -> hidden <audio> in 'stream' output mode).
+     * Graph: AudioBufferSourceNode -> GainNode (volume x ReplayGain) -> destination.
      */
     class LoopEngine {
         constructor(player) {
@@ -1063,7 +1056,7 @@
                 }
                 const t1 = performance.now();
 
-                const ctx = contexts.get(info.sampleRate, outputMode(info));
+                const ctx = contexts.get(info.sampleRate);
                 if (!buffer) buffer = await ctx.decodeAudioData(bytes);
                 if (gen !== this._gen) return 'aborted';
 
@@ -1081,7 +1074,7 @@
 
                 this.buffer = buffer;
                 this.gain = ctx.createGain();
-                this.gain.connect(contexts.output);
+                this.gain.connect(ctx.destination);
                 this._volume = this.player._savedVolume();
                 this._norm = this._normalization(options);
                 this._applyGain();
@@ -1092,13 +1085,14 @@
                 if (ctx.state !== 'running') {
                     await withTimeout(ctx.resume(), 2000, 'AudioContext.resume');
                 }
-                await withTimeout(contexts.startOutput(), 2000, 'stream output play()');
                 if (gen !== this._gen) return 'aborted';
                 if (ctx.state !== 'running') throw new Error('AudioContext is ' + ctx.state + ' (autoplay policy?)');
+                contexts.startKeepAlive();
 
-                console.info(TAG, `loop engine (${contexts.mode}): ${info.codec} ${info.sampleRate} Hz, loop ${info.loopStart}..${info.loopEnd}` +
+                console.info(TAG, `loop engine: ${info.codec} ${info.sampleRate} Hz, loop ${info.loopStart}..${info.loopEnd}` +
                     ` (${info.convention || ''}), ${from}: fetch ${Math.round(t1 - t0)} ms, decode ${Math.round(performance.now() - t1)} ms`);
                 this._startTimer();
+                this._syncNowPlaying();
                 this.player._trigger('playing');
                 return true;
             } catch (e) {
@@ -1249,6 +1243,7 @@
                     this._finish(this._total);
                     return;
                 }
+                this._syncNowPlaying();
                 this.player._trigger('timeupdate');
             }, 250);
         }
@@ -1258,6 +1253,10 @@
                 clearInterval(this._timer);
                 this._timer = null;
             }
+        }
+
+        _syncNowPlaying() {
+            if (this.info && this.source) setNowPlaying({ paused: this._paused, duration: this.duration() / 1000, position: this.currentTime() / 1000 });
         }
 
         /** Stops audio and releases the buffer; the AudioContext stays for the next loop track. */
@@ -1273,7 +1272,8 @@
         _finish(reportPos) {
             this._stopTimer();
             this._stopSource();
-            contexts.pauseOutput(); // don't leave a silent stream "playing" if the next track is plain
+            contexts.pauseKeepAlive(); // the next track may be plain, with its own element
+            setNowPlaying(null);
             this._reportPos = reportPos;
             this.pt = null;
             if (this._mediaSource) this._mediaSource.RunTimeTicks = this._runTimeTicks;
@@ -1353,6 +1353,7 @@
             if (this._abort) this._abort.abort();
             this._teardown();
             this._clear();
+            setNowPlaying(null);
             contexts.close();
         }
 
@@ -1377,6 +1378,7 @@
             this._pos(); // record a seam crossing before re-anchoring
             this._stopSource();
             this._startAt(Math.round((Math.max(0, ms) / 1000) * this._rate));
+            this._syncNowPlaying();
             this.player._trigger('timeupdate');
         }
 
@@ -1390,17 +1392,19 @@
             if (!ctx || !this.source || this._paused) return;
             this._paused = true;
             this._stopTimer();
-            contexts.pauseOutput();
+            contexts.pauseKeepAlive();
+            this._syncNowPlaying();
             ctx.suspend().then(() => this.player._trigger('pause'));
         }
 
         unpause() {
             const ctx = this._ctx;
             if (!ctx || !this.source || !this._paused) return;
-            contexts.startOutput().catch((e) => console.error(TAG, 'stream output play() failed', e));
+            contexts.startKeepAlive();
             ctx.resume().then(() => {
                 this._paused = false;
                 this._startTimer();
+                this._syncNowPlaying();
                 this.player._trigger('unpause');
                 this.player._trigger('playing');
             }, (e) => console.error(TAG, 'resume failed', e));
@@ -1717,7 +1721,7 @@
             deps.events.on(this, 'repeatmodechange', () => {
                 if (this._engine === this._loop) this._loop.onRepeatModeChange();
             });
-            console.info(TAG, 'player registered; loop output ' + outputMode() + (isDisabledLocally() ? '; DISABLED in this browser (vgmloop.disabled=1)' : ''));
+            console.info(TAG, 'player registered' + (isDisabledLocally() ? '; DISABLED in this browser (vgmloop.disabled=1)' : ''));
             if (pendingNotice && deps.toast) {
                 const msg = pendingNotice;
                 pendingNotice = null;

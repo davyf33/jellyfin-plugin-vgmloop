@@ -4,7 +4,7 @@ Seamless, sample-accurate looping of video game music in the Jellyfin **web clie
 
 Status: **1.0**. Tested on Chrome, Firefox and Safari on macOS, Safari on iPhone and the Jellyfin iOS app; see [docs/browser-notes.md](docs/browser-notes.md). How it works: [docs/design.md](docs/design.md).
 
-Requires Jellyfin **12.2** (for 12.1, install VGM Loop 1.0). Works in the web client and in apps that embed it (e.g. the Jellyfin iOS app); native players such as Finamp or Jellyfin Media Player are not affected.
+Requires Jellyfin **12.4** (for 12.2 and 12.3, install VGM Loop 1.2.2; for 12.1, install VGM Loop 1.0). Works in the web client and in apps that embed it (e.g. the Jellyfin iOS app); native players such as Finamp or Jellyfin Media Player are not affected.
 
 ## How it works
 
@@ -104,15 +104,8 @@ Per-browser switches (work on phones too; open the URL once, the setting sticks 
 |---|---|
 | `https://SERVER/web/?vgmloop=off` | stock player in this browser |
 | `https://SERVER/web/?vgmloop=on` | VGM Loop player again |
-| `https://SERVER/web/?vgmloop=stream` | loop tracks play through a hidden `<audio>` element (fallback if media keys / Now Playing don't control loop tracks in some browser) |
-| `https://SERVER/web/?vgmloop=direct` | loop tracks play straight to Web Audio output (default) |
 | `https://SERVER/web/?vgmloop=prefetch-off` | don't preload the next loop track (e.g. to save mobile data); `prefetch-on` restores it |
 | `https://SERVER/web/?vgmloop=playthrough-off` | play cut rips once, stopping at the loop end, instead of looping and fading; `playthrough-on` restores it |
-
-On iPhone and iPad, if the lock screen or Control Center can't pause or skip loop tracks, set **Loop output on iPhone
-and iPad** to **Audio element** in the plugin settings, then reload the app or page. That routes loop tracks through a
-hidden `<audio>` element, the same as `?vgmloop=stream`, and works in the Jellyfin app, where you can't use the URL
-switches. A browser's own `?vgmloop=stream` or `?vgmloop=direct` overrides the setting.
 
 Differences from the stock audio player: no hls.js, so audio transcodes are delivered as progressive HTTP (aac/mp3/opus) and the
 "always remux FLAC/MP3" settings are ignored for music (the original file is played directly). When audio normalization is

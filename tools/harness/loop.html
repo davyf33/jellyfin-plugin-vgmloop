@@ -94,14 +94,13 @@ document.getElementById('run').addEventListener('click', async () => {
     let playing = waitFor(p, 'playing', 8000);
     await p.play(opts('flac'));
     check('flac: loop engine chosen', p._engine === p._loop);
-    log('output mode: ' + (localStorage.getItem('vgmloop.output') || 'direct'));
     check('flac: playing', await playing);
     const ctx1 = p._loop._ctx;
     check('flac: AudioContext at 32000', ctx1 && ctx1.sampleRate === 32000 && ctx1.state === 'running', ctx1 && [ctx1.sampleRate, ctx1.state]);
-    if (localStorage.getItem('vgmloop.output') === 'stream') {
-      const se = document.querySelector('audio.vgmLoopStreamAudio');
-      check('stream mode: <audio srcObject> playing', se && se.srcObject && !se.paused, se && [!!se.srcObject, se.paused]);
-    }
+    await sleep(100);
+    const ka = document.querySelector('audio.vgmLoopKeepAlive');
+    check('flac: keep-alive <audio> playing', ka && !ka.paused, ka && ka.paused);
+    check('flac: Now Playing state playing', !navigator.mediaSession || navigator.mediaSession.playbackState === 'playing');
     check('flac: decoded length == totalSamples', p._loop.buffer.length === 2349639, p._loop.buffer.length);
     check('flac: duration 73426 ms', near(p.duration(), 73426.2, 1), p.duration());
     check('flac: source loop on, points exact', p._loop.source.loop && p._loop.source.loopStart * 32000 === 197319 && p._loop.source.loopEnd * 32000 <= 2349639 && p._loop.source.loopEnd * 32000 > 2349638.999999);
@@ -125,7 +124,8 @@ document.getElementById('run').addEventListener('click', async () => {
     // pause / resume across time
     p.pause(); await sleep(150);
     const tp = p.currentTime(); await sleep(400);
-    if (localStorage.getItem('vgmloop.output') === 'stream') check('stream mode: element paused with the context', document.querySelector('audio.vgmLoopStreamAudio').paused);
+    check('flac: keep-alive paused with the context', document.querySelector('audio.vgmLoopKeepAlive').paused);
+    check('flac: Now Playing state paused', !navigator.mediaSession || navigator.mediaSession.playbackState === 'paused');
     check('flac: paused freezes position', p.paused() && near(p.currentTime(), tp, 5) && counts.pause === 1, [tp, p.currentTime()]);
     p.unpause(); await sleep(300);
     check('flac: unpause', !p.paused() && counts.unpause === 1 && p.currentTime() > tp + 100);
@@ -268,7 +268,8 @@ document.getElementById('run').addEventListener('click', async () => {
     check('stop during load: aborted cleanly', counts.playing === pc && !p._loop.source && p._engine.currentSrc() == null, { playing: counts.playing - pc });
 
     check('no error events', counts.error === 0, counts);
-    check('audio elements: plain + (stream mode only) stream', document.querySelectorAll('audio.vgmLoopAudio').length === 1 && document.querySelectorAll('audio').length === (localStorage.getItem('vgmloop.output') === 'stream' ? 2 : 1), document.querySelectorAll('audio').length);
+    check('audio elements: plain + keep-alive', document.querySelectorAll('audio.vgmLoopAudio').length === 1 && document.querySelectorAll('audio').length === 2, document.querySelectorAll('audio').length);
+    check('keep-alive paused after the last loop track', document.querySelector('audio.vgmLoopKeepAlive').paused);
     p.destroy();
   } catch (e) {
     check('exception: ' + (e && e.stack || e), false);

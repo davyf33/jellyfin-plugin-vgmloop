@@ -116,12 +116,6 @@ test('stopReportPosition', () => {
     assert.equal(core.stopReportPosition(12345, true, LE), LE);
 });
 
-test('msToSamples clamps into the buffer', () => {
-    assert.equal(core.msToSamples(6166.21875, R, TOTAL), LS);
-    assert.equal(core.msToSamples(-5, R, TOTAL), 0);
-    assert.equal(core.msToSamples(1e9, R, TOTAL), TOTAL - 1);
-});
-
 test('loopEndSeconds never rounds past the sample index', () => {
     assert.equal(3524459 / 48000 * 48000 > 3524459, true, 'the float trap this guards against');
     const s = core.loopEndSeconds(3524459, 48000);

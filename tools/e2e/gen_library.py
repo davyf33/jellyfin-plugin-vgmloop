@@ -27,7 +27,7 @@ jobs.append((f'{OUT}/Cut Album (2012)/Disc 02/03 - No Loop.flac', 2, 900,
 # 2. Ogg Vorbis + Opus with a real 3 s ending after the loop (not cut rips). Disc names, platform, series.
 tail = {'ALBUM': 'Tail Album', 'ALBUMARTIST': 'Nintendo', 'GENRE': 'Soundtrack', 'PLATFORM': 'Wii', 'SERIES': 'Super Mario',
         'RELEASECATEGORY': 'Official Soundtrack', 'DISCTOTAL': '2'}
-jobs.append((f'{OUT}/Tail Album/Disc 1/01 - Vorbis.ogg', 6, 440, dict(tail, DISCNUMBER='1', TRACKNUMBER='1', TITLE='Vorbis', DISCSUBTITLE='Vorbis Disc', LOOPSTART='32000', LOOPLENGTH='64000'), ['-c:a', 'libvorbis', '-q:a', '2']))
+jobs.append((f'{OUT}/Tail Album/Disc 1/01 - Vorbis.ogg', 6, 440, dict(tail, DISCNUMBER='1', TRACKNUMBER='1', TITLE='Vorbis', DISCSUBTITLE='Vorbis Disc', LOOPSTART='32000', LOOPLENGTH='64000'), ['-c:a', 'vorbis', '-strict', '-2']))
 jobs.append((f'{OUT}/Tail Album/Disc 2/01 - Opus.opus', 6, 550, dict(tail, DISCNUMBER='2', TRACKNUMBER='1', TITLE='Opus', DISCSUBTITLE='Opus Disc', LOOPSTART='48000', LOOPLENGTH='96000'), ['-c:a', 'libopus', '-b:a', '64k'], 48000))
 
 # 3. MP3 with ID3: disc names in TSST, album tags in TXXX frames.

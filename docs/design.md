@@ -84,7 +84,10 @@ every music track (`item.Type === 'Audio'`) so the player never changes mid-queu
   `audioDataOffset` bytes, decodes it in an `AudioContext` running at the file's native sample rate, and plays it
   with `AudioBufferSourceNode` (`loopStart`/`loopEnd` from samples) → `GainNode` (volume × ReplayGain) →
   destination. Decoding and playing at the native rate keeps loop points sample-exact. One context is reused while
-  consecutive loop tracks share a rate. Any failure falls back to the plain engine.
+  consecutive loop tracks share a rate. Any failure falls back to the plain engine. While a loop track plays, a
+  silent looping `<audio>` (`vgmLoopKeepAlive`) plays too and the engine sets `mediaSession.playbackState` and
+  `setPositionState`: iOS only gives lock-screen transport controls to a page with a playing media element (see
+  browser-notes.md).
 
 **Repeat integration.** Looping follows jellyfin-web's repeat button: Repeat One loops forever; Repeat off / all plays
 the file once. Changing the mode mid-track re-anchors the position model without restarting (leaving Repeat One lets

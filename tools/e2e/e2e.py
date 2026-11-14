@@ -158,7 +158,7 @@ def loop_status(token, ids):
 
 def main():
     info = wait_ready()
-    check('server is Jellyfin 12.2', info['Version'].startswith('12.2'), info['Version'])
+    check('server is Jellyfin 12.4', info['Version'].startswith('12.4'), info['Version'])
     if not info.get('StartupWizardCompleted'):
         req('POST', '/Startup/Configuration', {'UICulture': 'en-US', 'MetadataCountryCode': 'US', 'PreferredMetadataLanguage': 'en'}, token=False, expect=204)
         req('GET', '/Startup/User', token=False, expect=200)
@@ -276,10 +276,6 @@ def main():
     plugin_config(token, lambda c: c.update(EnablePlaythrough=False))
     check('LoopInfo: play-through off hides "every loop track" too', 'playthroughAllLoops' not in li(by_title['Vorbis'])[1])
     plugin_config(token, lambda c: c.update(EnablePlaythrough=True, PlaythroughAllLoops=False))
-    check('LoopInfo: iOS loop output default (field absent)', 'iosOutput' not in li(by_title['Cut 1-1'])[1])
-    plugin_config(token, lambda c: c.update(IosLoopOutput='stream'))
-    check('LoopInfo: iOS loop output "stream"', li(by_title['Cut 1-1'])[1].get('iosOutput') == 'stream')
-    plugin_config(token, lambda c: c.update(IosLoopOutput='direct'))
     plugin_config(token, lambda c: c.update(EnablePlaythrough=False))
     check('LoopInfo with play-through off: no play-through fields', 'playthroughLoops' not in li(by_title['Cut 1-1'])[1])
     plugin_config(token, lambda c: c.update(EnablePlaythrough=True, PlaythroughLoops=9, PlaythroughFadeSeconds=99))
