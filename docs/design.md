@@ -84,7 +84,10 @@ every music track (`item.Type === 'Audio'`) so the player never changes mid-queu
   `audioDataOffset` bytes, decodes it in an `AudioContext` running at the file's native sample rate, and plays it
   with `AudioBufferSourceNode` (`loopStart`/`loopEnd` from samples) → `GainNode` (volume × ReplayGain) →
   destination. Decoding and playing at the native rate keeps loop points sample-exact. One context is reused while
-  consecutive loop tracks share a rate. Any failure falls back to the plain engine.
+  consecutive loop tracks share a rate. Any failure falls back to the plain engine. While a loop track plays, a
+  silent looping `<audio>` (`vgmLoopKeepAlive`) plays too and the engine sets `mediaSession.playbackState` and
+  `setPositionState`: iOS only gives lock-screen transport controls to a page with a playing media element (see
+  browser-notes.md).
 
 **Repeat integration.** Looping follows jellyfin-web's repeat button: Repeat One loops forever; Repeat off / all plays
 the file once. Changing the mode mid-track re-anchors the position model without restarting (leaving Repeat One lets
@@ -143,7 +146,10 @@ there:
   starts above disc 1), so a single-disc album shows no name.
 - Disc buttons. When the Discs answer has `discButtons`, each header's text moves into `span.vgmloop-discLabel` and
   `span.vgmloop-discButtons` (jellyfin-web's `paper-icon-button-light` buttons with the `play_arrow` and `shuffle`
-  Material icons) goes at the right edge (the header becomes a flex row). A click reads the rows under that header
+  Material icons) goes at the right edge (the header becomes a flex row). The buttons are built from markup:
+  jellyfin-web loads the webcomponents.js 0.7 Custom Elements v0 polyfill, whose `document.createElement` only takes a
+  string type extension and throws on `createElement('button', { is })` (that is why 1.2.2 showed no buttons).
+  `tools/e2e/live.mjs` loads that polyfill for this reason. A click reads the rows under that header
   from the DOM (`discGroups`), fetches them as full items in chunks of 100 and calls `playbackManager.play({ items })`,
   shuffled first for Shuffle (`shuffleList`). Passing items matters: given only ids, jellyfin-web fetches at most 300,
   which would cut a long disc short.

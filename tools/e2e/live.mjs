@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 
 const SERVER = (process.argv[2] || 'http://localhost:8096').replace(/\/$/, '');
 const HERE = dirname(fileURLToPath(import.meta.url));
-const PLAYER = join(HERE, '..', '..', 'Jellyfin.Plugin.VgmLoop', 'Web', 'player.js');
+const PLAYER = process.env.PLAYER_JS || join(HERE, '..', '..', 'Jellyfin.Plugin.VgmLoop', 'Web', 'player.js');
 const PLUGIN = 'f19dceed-5dce-4a6e-b77c-1b0ccdf8709a';
 const AUTH = 'MediaBrowser Client="vgmloop-live", Device="e2e", DeviceId="vgmloop-live", Version="1.0"';
 const { chromium } = await import(process.env.PLAYWRIGHT || 'playwright');
@@ -37,9 +37,20 @@ for (const name of ['Cut Album', 'Tail Album', 'MP3 Album', 'Big Album']) librar
 const cfg = await api(`/Plugins/${PLUGIN}/Configuration`, { token });
 await api(`/Plugins/${PLUGIN}/Configuration`, { method: 'POST', token, body: { ...cfg, PlaythroughLoops: 1, PlaythroughFadeSeconds: 1 } });
 
-const page = '<!doctype html><meta charset="utf-8"><script src="player.js"></script><body><div id="listChildrenCollapsible"><div class="itemsContainer"></div></div>';
+// jellyfin-web loads the webcomponents.js 0.7 Custom Elements v0 polyfill, which replaces document.createElement and
+// upgrades <button is="paper-icon-button-light">. WEBCOMPONENTS points at its webcomponents-lite.js (run.sh fetches
+// it); the element is registered the way jellyfin-web 12.2 does it (src/elements/emby-button/paper-icon-button-light.js).
+const WEBCOMPONENTS = process.env.WEBCOMPONENTS;
+const polyfill = WEBCOMPONENTS
+    ? '<script src="webcomponents-lite.js"></script><script>const P = Object.create(HTMLButtonElement.prototype);'
+      + 'P.createdCallback = function () { this.classList.add("paper-icon-button-light"); };'
+      + 'document.registerElement("paper-icon-button-light", { prototype: P, extends: "button" });</script>'
+    : '';
+if (!WEBCOMPONENTS) console.log('  (WEBCOMPONENTS not set: running without jellyfin-web\'s Custom Elements polyfill)');
+const page = '<!doctype html><meta charset="utf-8">' + polyfill + '<script src="player.js"></script><body><div id="listChildrenCollapsible"><div class="itemsContainer"></div></div>';
 const http = createServer((q, r) => {
     if (q.url.startsWith('/player.js')) { r.setHeader('Content-Type', 'application/javascript'); r.end(readFileSync(PLAYER)); return; }
+    if (WEBCOMPONENTS && q.url.startsWith('/webcomponents-lite.js')) { r.setHeader('Content-Type', 'application/javascript'); r.end(readFileSync(WEBCOMPONENTS)); return; }
     r.setHeader('Content-Type', 'text/html'); r.end(page);
 }).listen(0);
 const origin = `http://localhost:${http.address().port}/`;
@@ -47,7 +58,8 @@ const origin = `http://localhost:${http.address().port}/`;
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || undefined, args: ['--autoplay-policy=no-user-gesture-required'] });
 const tab = await browser.newPage();
 tab.on('console', (m) => { if (['error', 'warning'].includes(m.type())) console.log('  console.' + m.type() + ': ' + m.text()); });
-tab.on('pageerror', (e) => console.log('  pageerror: ' + e.message));
+const pageErrors = [];
+tab.on('pageerror', (e) => { pageErrors.push(e.message); console.log('  pageerror: ' + e.message); });
 await tab.goto(origin);
 
 const results = await tab.evaluate(async ({ SERVER, token, user, AUTH, library }) => {
@@ -210,6 +222,8 @@ const results = await tab.evaluate(async ({ SERVER, token, user, AUTH, library }
     await until(() => list.querySelectorAll('.vgmloop-discButtons').length === 2 && list.querySelectorAll('.vgmloop-discName').length === 2, 5000);
     const headers = [...list.querySelectorAll('h2.listGroupHeader')];
     check('buttons: one Play + one Shuffle on each disc header', headers.every((h) => h.querySelector('.vgmloop-discPlay') && h.querySelector('.vgmloop-discShuffle')));
+    check('buttons: jellyfin\'s paper-icon-button-light buttons', [...list.querySelectorAll('.vgmloop-discButtons button')].every((b) => b.getAttribute('is') === 'paper-icon-button-light'
+        && b.classList.contains('paper-icon-button-light')));
     check('buttons: header text unchanged ("Disc 1 - Town Music")', headers.map((h) => h.textContent).join('|') === 'Disc 1 - Town Music|Disc 2 - Hourly Music', headers.map((h) => h.textContent));
     const hr = headers[0].getBoundingClientRect(), br = headers[0].querySelector('.vgmloop-discButtons').getBoundingClientRect(),
         lr = headers[0].querySelector('.vgmloop-discLabel').getBoundingClientRect();
@@ -254,6 +268,7 @@ if (process.env.SCREENSHOT) await tab.screenshot({ path: process.env.SCREENSHOT,
 await api(`/Plugins/${PLUGIN}/Configuration`, { method: 'POST', token, body: cfg });
 await browser.close();
 http.close();
+results.push({ name: 'no uncaught errors on the page', ok: pageErrors.length === 0, extra: pageErrors.length ? pageErrors : undefined });
 let failed = 0;
 for (const r of results) {
     if (!r.ok) failed++;

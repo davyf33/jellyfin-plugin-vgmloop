@@ -190,9 +190,9 @@ public class AlbumTagsTests
             Assert.Equal(["Nintendo 3DS"], tags.Values(Platform));
             Assert.Equal(["Game Rip"], tags.Values(Category));
             Assert.Equal(["Animal Crossing"], tags.Values(Series));
-            Assert.Equal(["Wii"], service.GetValues(mp3, Platform));
-            Assert.Equal(["Official Soundtrack"], service.GetValues(mp3, Category));
-            Assert.Equal(["Super Mario"], service.GetValues(mp3, Series));
+            Assert.Equal(["Wii"], service.Get(mp3).Values(Platform));
+            Assert.Equal(["Official Soundtrack"], service.Get(mp3).Values(Category));
+            Assert.Equal(["Super Mario"], service.Get(mp3).Values(Series));
         }
         finally
         {

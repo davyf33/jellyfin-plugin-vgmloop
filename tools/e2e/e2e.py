@@ -158,7 +158,7 @@ def loop_status(token, ids):
 
 def main():
     info = wait_ready()
-    check('server is Jellyfin 12.2', info['Version'].startswith('12.2'), info['Version'])
+    check('server is Jellyfin 12.4', info['Version'].startswith('12.4'), info['Version'])
     if not info.get('StartupWizardCompleted'):
         req('POST', '/Startup/Configuration', {'UICulture': 'en-US', 'MetadataCountryCode': 'US', 'PreferredMetadataLanguage': 'en'}, token=False, expect=204)
         req('GET', '/Startup/User', token=False, expect=200)

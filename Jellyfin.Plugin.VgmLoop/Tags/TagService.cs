@@ -97,14 +97,6 @@ public class TagService
     public string? GetDiscName(string path) => Get(path).DiscName;
 
     /// <summary>
-    /// Gets one album tag field's values tagged in one file.
-    /// </summary>
-    /// <param name="path">Absolute path.</param>
-    /// <param name="field">The field.</param>
-    /// <returns>The values; empty when the file has none or can't be read.</returns>
-    public IReadOnlyList<string> GetValues(string path, AlbumTagField field) => Get(path).Values(field);
-
-    /// <summary>
     /// Gets the tags the plugin uses from one file.
     /// </summary>
     /// <param name="path">Absolute path.</param>

@@ -6,6 +6,8 @@
 # Needs python3, ffmpeg and curl. jellyfin-web is not needed: the web dir is the index.html/config.json test copies.
 # LIVE=1 also runs tools/e2e/live.mjs (player.js in Chromium against the same server; needs node and Playwright,
 # PLAYWRIGHT=/path/to/playwright/index.mjs and CHROMIUM=/path/to/chromium if they aren't found by default).
+# Local test server: WEB=/path/to/jellyfin-web serves the real web client, KEEP=1 leaves the server running after the
+# checks (sign in as admin / e2e at http://localhost:8096; Ctrl-C stops it).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 : "${JELLYFIN:?Set JELLYFIN to the Jellyfin server executable}"
@@ -17,8 +19,12 @@ rm -rf "$WORK" && mkdir -p "$WORK"/{data/plugins,config,cache,log,web}
 python3 -I "$ROOT/tools/e2e/gen_library.py" "$WORK/music"
 (cd "$ROOT" && scripts/package.sh "$VERSION" >/dev/null)
 cp -r "$ROOT/artifacts/VGM Loop_$VERSION" "$WORK/data/plugins/"
-cp "$ROOT/tests/Jellyfin.Plugin.VgmLoop.Tests/TestData/index-12.1.0.html" "$WORK/web/index.html"
-cp "$ROOT/tests/Jellyfin.Plugin.VgmLoop.Tests/TestData/config-12.1.0.json" "$WORK/web/config.json"
+if [ -n "${WEB:-}" ]; then
+  cp -R "$WEB/." "$WORK/web/"
+else
+  cp "$ROOT/tests/Jellyfin.Plugin.VgmLoop.Tests/TestData/index-12.1.0.html" "$WORK/web/index.html"
+  cp "$ROOT/tests/Jellyfin.Plugin.VgmLoop.Tests/TestData/config-12.1.0.json" "$WORK/web/config.json"
+fi
 
 if curl -s -o /dev/null "http://localhost:$PORT/"; then
   echo "Something is already listening on port $PORT; stop it first." >&2
@@ -29,7 +35,17 @@ fi
 SERVER=$!
 stop_server() { kill "$SERVER" 2>/dev/null || true; wait "$SERVER" 2>/dev/null || true; }
 trap stop_server EXIT
-E2E_IDS="$WORK/ids.json" python3 -I "$ROOT/tools/e2e/e2e.py" "http://localhost:$PORT" "$WORK/music" "$VERSION"
+E2E_IDS="$WORK/ids.json" python3 -I "$ROOT/tools/e2e/e2e.py" "http://localhost:$PORT" "$WORK/music" "$VERSION" || [ -n "${KEEP:-}" ]
 if [ -n "${LIVE:-}" ]; then
+  # The Custom Elements polyfill jellyfin-web 12.2 loads (package.json: webcomponents.js 0.7.24), as plain data from npm.
+  if [ -z "${WEBCOMPONENTS:-}" ]; then
+    mkdir -p "$WORK/webcomponents"
+    curl -sSfL https://registry.npmjs.org/webcomponents.js/-/webcomponents.js-0.7.24.tgz | tar -xz -C "$WORK/webcomponents"
+    export WEBCOMPONENTS="$WORK/webcomponents/package/webcomponents-lite.js"
+  fi
   node "$ROOT/tools/e2e/live.mjs" "http://localhost:$PORT"
+fi
+if [ -n "${KEEP:-}" ]; then
+  echo "Server running at http://localhost:$PORT (admin / e2e). Ctrl-C to stop."
+  wait "$SERVER"
 fi
