@@ -453,24 +453,6 @@
         }
     }
 
-    /**
-     * Now Playing state (lock screen, Control Center). jellyfin-web only sets mediaSession metadata and action handlers;
-     * with an <audio> element the OS reads playing/paused and the position from the element, but Web Audio has no
-     * element, so the loop engine reports them here. null clears them, handing back to the element.
-     */
-    function setNowPlaying(state) {
-        const ms = root.navigator && root.navigator.mediaSession;
-        if (!ms) return;
-        try {
-            ms.playbackState = state ? (state.paused ? 'paused' : 'playing') : 'none';
-            if (ms.setPositionState) {
-                ms.setPositionState(state ? { duration: state.duration, position: Math.min(state.position, state.duration), playbackRate: 1 } : undefined);
-            }
-        } catch (e) {
-            console.debug(TAG, 'mediaSession state not set', e);
-        }
-    }
-
     function currentUserId(deps) {
         try {
             const apiClient = deps.ServerConnections.currentApiClient();
@@ -897,13 +879,13 @@
         return audioDataOffset > 0 ? bytes.slice(audioDataOffset) : bytes;
     }
 
-    /** A 1 s silent 8 kHz mono 8-bit WAV, as a blob URL. */
-    function silentWavUrl() {
-        const n = 8000;
+    /** A silent 8 kHz mono 8-bit WAV of `seconds` (8 KB/s), as a blob URL. */
+    function silentWavUrl(seconds) {
+        const n = Math.max(1, Math.ceil(seconds * 8000));
         const b = new DataView(new ArrayBuffer(44 + n));
         const text = (o, t) => [...t].forEach((c, i) => b.setUint8(o + i, c.charCodeAt(0)));
         text(0, 'RIFF'); b.setUint32(4, 36 + n, true); text(8, 'WAVEfmt '); b.setUint32(16, 16, true);
-        b.setUint16(20, 1, true); b.setUint16(22, 1, true); b.setUint32(24, n, true); b.setUint32(28, n, true);
+        b.setUint16(20, 1, true); b.setUint16(22, 1, true); b.setUint32(24, 8000, true); b.setUint32(28, 8000, true); // rate, bytes per second
         b.setUint16(32, 1, true); b.setUint16(34, 8, true); text(36, 'data'); b.setUint32(40, n, true);
         for (let i = 0; i < n; i++) b.setUint8(44 + i, 128); // 8-bit PCM silence
         return URL.createObjectURL(new Blob([b], { type: 'audio/wav' }));
@@ -913,9 +895,10 @@
      * One AudioContext at the current loop track's native sample rate. Reused while consecutive loop
      * tracks share a rate; replaced (old one closed) when the rate changes. Safari limits live contexts.
      *
-     * Next to it, a silent looping <audio> plays while a loop track does: iOS (and Chrome's media controls) only give
-     * lock-screen / Now Playing transport controls to a page with a playing, file-backed media element. Web Audio alone,
-     * or routed into an element through a MediaStream, shows the title with no working buttons.
+     * Next to it, a silent <audio> as long as the track plays while a loop track does, kept at the track's position:
+     * iOS (and Chrome's media controls) only give lock-screen / Now Playing transport controls to a page with a playing,
+     * file-backed media element, and take the seek bar from that element. Web Audio alone, or routed into an element
+     * through a MediaStream, shows the title with no working buttons.
      */
     const contexts = {
         ctx: null,
@@ -933,19 +916,30 @@
             console.debug(TAG, 'AudioContext created at ' + rate + ' Hz');
             return ctx;
         },
-        startKeepAlive() {
-            // One persistent element: iOS unlocks playback per element, so later tracks can start it without a gesture.
+        /** Starts (or keeps) the silent element at `position` of a `duration`-second track, or pauses it. */
+        syncKeepAlive(duration, position, paused) {
             if (!this._el) {
+                // One persistent element: iOS unlocks playback per element, so later tracks can start it without a gesture.
                 const el = document.createElement('audio');
                 el.classList.add('vgmLoopKeepAlive', 'hide');
                 el.setAttribute('playsinline', '');
-                el.loop = true;
-                el.src = silentWavUrl();
                 document.body.appendChild(el);
                 this._el = el;
             }
-            // Not fatal: without it loop tracks still play, only the lock-screen buttons are missing.
-            this._el.play().catch((e) => console.warn(TAG, 'Now Playing keep-alive not started:', e && e.name));
+            const el = this._el;
+            if (this._duration !== duration) {
+                // shortcut: a fresh blob per track length (8 KB/s; ~5 MB for 10 min), fine for game tracks.
+                if (el.src) URL.revokeObjectURL(el.src);
+                el.src = silentWavUrl(duration);
+                this._duration = duration;
+            }
+            if (Math.abs(el.currentTime - position) > 0.5) el.currentTime = position;
+            if (paused) {
+                el.pause();
+            } else if (el.paused) {
+                // Not fatal: without it loop tracks still play, only the lock-screen controls are missing.
+                el.play().catch((e) => console.warn(TAG, 'Now Playing keep-alive not started:', e && e.name));
+            }
         },
         pauseKeepAlive() {
             if (this._el) this._el.pause();
@@ -1087,7 +1081,6 @@
                 }
                 if (gen !== this._gen) return 'aborted';
                 if (ctx.state !== 'running') throw new Error('AudioContext is ' + ctx.state + ' (autoplay policy?)');
-                contexts.startKeepAlive();
 
                 console.info(TAG, `loop engine: ${info.codec} ${info.sampleRate} Hz, loop ${info.loopStart}..${info.loopEnd}` +
                     ` (${info.convention || ''}), ${from}: fetch ${Math.round(t1 - t0)} ms, decode ${Math.round(performance.now() - t1)} ms`);
@@ -1256,7 +1249,7 @@
         }
 
         _syncNowPlaying() {
-            if (this.info && this.source) setNowPlaying({ paused: this._paused, duration: this.duration() / 1000, position: this.currentTime() / 1000 });
+            if (this.info && this.source) contexts.syncKeepAlive(this.duration() / 1000, this.currentTime() / 1000, this._paused);
         }
 
         /** Stops audio and releases the buffer; the AudioContext stays for the next loop track. */
@@ -1273,7 +1266,6 @@
             this._stopTimer();
             this._stopSource();
             contexts.pauseKeepAlive(); // the next track may be plain, with its own element
-            setNowPlaying(null);
             this._reportPos = reportPos;
             this.pt = null;
             if (this._mediaSource) this._mediaSource.RunTimeTicks = this._runTimeTicks;
@@ -1353,7 +1345,6 @@
             if (this._abort) this._abort.abort();
             this._teardown();
             this._clear();
-            setNowPlaying(null);
             contexts.close();
         }
 
@@ -1392,7 +1383,6 @@
             if (!ctx || !this.source || this._paused) return;
             this._paused = true;
             this._stopTimer();
-            contexts.pauseKeepAlive();
             this._syncNowPlaying();
             ctx.suspend().then(() => this.player._trigger('pause'));
         }
@@ -1400,7 +1390,8 @@
         unpause() {
             const ctx = this._ctx;
             if (!ctx || !this.source || !this._paused) return;
-            contexts.startKeepAlive();
+            // Inside the gesture / remote command, where iOS lets the element start.
+            contexts.syncKeepAlive(this.duration() / 1000, this.currentTime() / 1000, false);
             ctx.resume().then(() => {
                 this._paused = false;
                 this._startTimer();

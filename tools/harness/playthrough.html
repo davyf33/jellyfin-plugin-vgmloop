@@ -123,12 +123,14 @@ document.getElementById('run').addEventListener('click', async () => {
     await p.play(o);
     p.currentTime(5400);
     await sleep(80);
+    check('cut: keep-alive <audio> as long as the play-through (6 s)', near(document.querySelector('audio.vgmLoopKeepAlive').duration, 6, 0.01), document.querySelector('audio.vgmLoopKeepAlive').duration);
     const faded = e.gain.gain.value;
     setRepeat(p, 'RepeatOne');
     check('fade + Repeat One: play-through off, still looping', !e.pt && e.source.loop === true);
     check('fade + Repeat One: seek bar back to the file length', o.mediaSource.RunTimeTicks === TICKS_3S && near(p.duration(), 3000, 1));
     check('fade + Repeat One: position on the file timeline', p.currentTime() >= 1000 && p.currentTime() < 3000, p.currentTime());
     await sleep(700);
+    check('fade + Repeat One: keep-alive back to the file length (3 s)', near(document.querySelector('audio.vgmLoopKeepAlive').duration, 3, 0.01), document.querySelector('audio.vgmLoopKeepAlive').duration);
     check('fade + Repeat One: ramped back up', faded < 0.9 * G && near(e.gain.gain.value, G, 1e-3), [faded, e.gain.gain.value]);
     stopped = waitFor(p, 'stopped', 1500);
     check('fade + Repeat One: keeps looping (no stop)', !(await stopped));
