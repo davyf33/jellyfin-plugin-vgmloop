@@ -37,8 +37,11 @@ Web Audio page but no working transport buttons or position, in Safari and the a
 simulator: title only, no position). jellyfin-web only sets `mediaSession.metadata` and action handlers, never
 `playbackState` or `setPositionState`, because a media element supplies those itself.
 
-So while a loop track plays, the loop engine also plays a silent, looping, file-backed `<audio>` (a 1 s blob WAV,
-`audio.vgmLoopKeepAlive`), the same kind of element the plain engine uses, and reports `playbackState` and
-`setPositionState` itself. Both are cleared when the track ends, so a following plain track's element takes over. The
-lock-screen buttons still need checking on a real iPhone: the simulator's lock screen never shows them, even for a
-plain `<audio>` file.
+So while a loop track plays, the loop engine also plays a silent file-backed `<audio>` (`audio.vgmLoopKeepAlive`, a
+blob WAV as long as the track's seek bar: the file, or the play-through length) and keeps it at the track's position.
+iOS then shows Now Playing from that element: play/pause, the seek bar, and jellyfin-web's mediaSession handlers.
+
+1.3.0.0 used a 1 s looping clip plus `mediaSession.setPositionState`. On an iPhone, play/pause worked but the seek
+bar jumped between the clip's position and the reported one, and the lock screen's previous/next buttons were greyed
+out (AirPods double/triple tap still skipped). The simulator's lock screen never shows transport buttons, even for a
+plain `<audio>` file, so this needs a real device.

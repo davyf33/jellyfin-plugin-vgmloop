@@ -100,7 +100,6 @@ document.getElementById('run').addEventListener('click', async () => {
     await sleep(100);
     const ka = document.querySelector('audio.vgmLoopKeepAlive');
     check('flac: keep-alive <audio> playing', ka && !ka.paused, ka && ka.paused);
-    check('flac: Now Playing state playing', !navigator.mediaSession || navigator.mediaSession.playbackState === 'playing');
     check('flac: decoded length == totalSamples', p._loop.buffer.length === 2349639, p._loop.buffer.length);
     check('flac: duration 73426 ms', near(p.duration(), 73426.2, 1), p.duration());
     check('flac: source loop on, points exact', p._loop.source.loop && p._loop.source.loopStart * 32000 === 197319 && p._loop.source.loopEnd * 32000 <= 2349639 && p._loop.source.loopEnd * 32000 > 2349638.999999);
@@ -112,6 +111,7 @@ document.getElementById('run').addEventListener('click', async () => {
 
     await sleep(600);
     check('flac: position advancing', p.currentTime() > 300 && p.currentTime() < 1500, p.currentTime());
+    check('flac: keep-alive as long as the track', ka && near(ka.duration * 1000, p.duration(), 1), ka && [ka.duration, p.duration()]);
 
     // seek to 0.5 s before the seam, wait 1 s -> wrapped to loopStart + 0.5 s
     p.currentTime(72926);
@@ -125,7 +125,7 @@ document.getElementById('run').addEventListener('click', async () => {
     p.pause(); await sleep(150);
     const tp = p.currentTime(); await sleep(400);
     check('flac: keep-alive paused with the context', document.querySelector('audio.vgmLoopKeepAlive').paused);
-    check('flac: Now Playing state paused', !navigator.mediaSession || navigator.mediaSession.playbackState === 'paused');
+    check('flac: keep-alive at the track position after a seam wrap', near(document.querySelector('audio.vgmLoopKeepAlive').currentTime * 1000, p.currentTime(), 600), [document.querySelector('audio.vgmLoopKeepAlive').currentTime, p.currentTime()]);
     check('flac: paused freezes position', p.paused() && near(p.currentTime(), tp, 5) && counts.pause === 1, [tp, p.currentTime()]);
     p.unpause(); await sleep(300);
     check('flac: unpause', !p.paused() && counts.unpause === 1 && p.currentTime() > tp + 100);
