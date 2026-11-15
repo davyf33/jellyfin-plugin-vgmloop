@@ -45,3 +45,17 @@ iOS then shows Now Playing from that element: play/pause, the seek bar, and jell
 bar jumped between the clip's position and the reported one, and the lock screen's previous/next buttons were greyed
 out (AirPods double/triple tap still skipped). The simulator's lock screen never shows transport buttons, even for a
 plain `<audio>` file, so this needs a real device.
+
+1.3.1.0 on an iPhone: the seek bar was steady, but it could not be dragged and previous/next stayed greyed. Plain tracks
+showed skip-10 buttons instead of previous/next. WebKit's source (NowPlayingManager, RemoteCommandListenerCocoa)
+explains both:
+- `setActionHandler` is dropped while the page has no media session yet, and jellyfin-web sets its handlers at
+  startup. With none registered, WebKit offers its default skip and seek buttons, not previous/next. The player wraps
+  `setActionHandler` and sets the handlers again on every `playing` event.
+- Seek and skip buttons are only enabled when the media that started last can seek. An AudioContext can't, so on
+  resume the loop engine starts the context before the silent element.
+
+The simulator's Now Playing view never draws the buttons, but MediaRemote can still be queried there. A small
+MediaRemote client run with `xcrun simctl spawn` (entitlements embedded in a `__TEXT,__entitlements` section) showed
+the enabled commands. Before the fix, loop tracks got play/pause only; after it, they got play, pause, stop,
+previous, next and seek-to-position. Commands sent the same way (seek, pause, play, next, previous) all worked.
