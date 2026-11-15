@@ -432,6 +432,19 @@
     const browser = detectBrowser(root.navigator);
     let corsCredentialsPromise;
 
+    // WebKit drops media session action handlers set while the page has no media yet, and jellyfin-web sets them at
+    // startup: the lock screen then shows WebKit's default skip buttons, or greyed ones. Set them again on play.
+    if (root.navigator.mediaSession) {
+        const ms = root.navigator.mediaSession;
+        const setHandler = ms.setActionHandler.bind(ms);
+        const handlers = new Map();
+        ms.setActionHandler = (action, handler) => {
+            setHandler(action, handler);
+            handlers.set(action, handler);
+        };
+        root.document.addEventListener('playing', () => handlers.forEach((h, a) => setHandler(a, h)), true);
+    }
+
     function getIncludeCorsCredentials() {
         if (!corsCredentialsPromise) {
             corsCredentialsPromise = fetch('config.json', { cache: 'no-cache' })
@@ -1390,9 +1403,11 @@
         unpause() {
             const ctx = this._ctx;
             if (!ctx || !this.source || !this._paused) return;
+            // Context first, element last: WebKit allows lock-screen seeking only if the last media to start can seek.
+            const resumed = ctx.resume();
             // Inside the gesture / remote command, where iOS lets the element start.
             contexts.syncKeepAlive(this.duration() / 1000, this.currentTime() / 1000, false);
-            ctx.resume().then(() => {
+            resumed.then(() => {
                 this._paused = false;
                 this._startTimer();
                 this._syncNowPlaying();

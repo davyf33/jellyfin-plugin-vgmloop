@@ -3,6 +3,14 @@
 <head>
 <meta charset="utf-8">
 <title>VGM Loop harness: loop engine</title>
+<script>
+// Spy under player.js's wrapper: counts what actually reaches the browser.
+window.msCalls = [];
+if (navigator.mediaSession) {
+    const orig = navigator.mediaSession.setActionHandler.bind(navigator.mediaSession);
+    navigator.mediaSession.setActionHandler = (a, h) => { msCalls.push(a); return orig(a, h); };
+}
+</script>
 <script src="player.js"></script>
 <style>
   :root { color-scheme: light dark; }
@@ -85,6 +93,7 @@ document.getElementById('run').addEventListener('click', async () => {
   try {
     const Cls = await window.VgmLoopPlayer();
     const p = new Cls(deps);
+    navigator.mediaSession.setActionHandler('nexttrack', () => {}); // as jellyfin-web does at startup
     const counts = {};
     for (const n of ['playing', 'pause', 'unpause', 'timeupdate', 'volumechange', 'stopped', 'error']) { counts[n] = 0; Events.on(p, n, () => counts[n]++); }
     appSettings.set('volume', 0.5);
@@ -100,6 +109,7 @@ document.getElementById('run').addEventListener('click', async () => {
     await sleep(100);
     const ka = document.querySelector('audio.vgmLoopKeepAlive');
     check('flac: keep-alive <audio> playing', ka && !ka.paused, ka && ka.paused);
+    check('flac: media session handlers set again on play', msCalls.filter((a) => a === 'nexttrack').length >= 2, msCalls);
     check('flac: decoded length == totalSamples', p._loop.buffer.length === 2349639, p._loop.buffer.length);
     check('flac: duration 73426 ms', near(p.duration(), 73426.2, 1), p.duration());
     check('flac: source loop on, points exact', p._loop.source.loop && p._loop.source.loopStart * 32000 === 197319 && p._loop.source.loopEnd * 32000 <= 2349639 && p._loop.source.loopEnd * 32000 > 2349638.999999);
